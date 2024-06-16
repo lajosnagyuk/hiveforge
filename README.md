@@ -15,10 +15,3 @@ Frontend - Responsible for user sessions and displaying information retrieved fr
 5. Determinism. When an agent is spun up from a configuration, I want it to be the same as another agent spun up from the same configuration.
 6. Powerful horizontal scaling. Running 100 agents must be as simple as running 5, without any concern for the underlying application. As long as Kubernetes resources allow scaling, HiveForge must be able to scale.
 7. Pull builds. Controller doesn't push build jobs to agents, they pull it for themselves. This allows tighter security on agents and simpler architecture for the controller.
-
-# Testing and Development notes
-```bash
-mix deps get
-```
-1. To run the tests, run `mix test`
-2. to run a REPL: `iex -S mix run` and `recompile`

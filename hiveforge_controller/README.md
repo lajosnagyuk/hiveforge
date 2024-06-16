@@ -30,3 +30,23 @@ openssl x509 -req -in server.csr -CA ca-cert.pem -CAkey ca-key.pem -CAcreateseri
 export HIVEFORGE_CONTROLLER_CERTFILE=$(pwd)/server-cert.pem
 export HIVEFORGE_CONTROLLER_KEYFILE=$(pwd)/server-key.pem
 ```
+
+
+# Testing and Development notes
+```bash
+mix deps get
+```
+Don't forget to create certificate files for testing, and mount them properly for production. TODO: Add mounting and generation in the Helm chart.
+1. To run the tests, run `mix test`
+2. to run a REPL: `iex -S mix run` and `recompile`
+
+
+# Run from container doing development:
+```bash
+make dev-run
+
+# pass in some variables
+HIVEFORGE_CONTROLLER_CERTFILE=/hiveforge_controller/misc/certificates/test-server-cert.pem \
+HIVEFORGE_CONTROLLER_KEYFILE=/hiveforge_controller/misc/certificates/test-server-key.pem \
+make dev-run
+```

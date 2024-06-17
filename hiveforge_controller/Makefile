@@ -8,6 +8,7 @@ DOCKER_REPO ?= lajos_nagy/hiveforge-controller
 DOCKER_TAG ?= latest
 HIVEFORGE_CONTROLLER_CERTFILE=/hiveforge_controller/misc/certificates/test-server-cert.pem
 HIVEFORGE_CONTROLLER_KEYFILE=/hiveforge_controller/misc/certificates/test-server-key.pem
+HIVEFORGE_CONTROLLER_PORT=4000
 
 # Docker Buildx setup
 DOCKER_BUILDX ?= docker buildx
@@ -35,8 +36,8 @@ build:
 		--build-arg APP_DIR=$(APP_DIR) \
 		--build-arg APP_NAME=$(APP_NAME) \
 		--build-arg TARGETPLATFORM=$(TARGETPLATFORM) \
+		--build-arg PORT=$(HIVEFORGE_CONTROLLER_PORT) \
 		-t $(DOCKER_REGISTRY)/$(DOCKER_REPO):$(DOCKER_TAG) \
-		--progress=plain \
 		--push .
 
 push:
@@ -45,7 +46,7 @@ push:
 
 dev-run:
 	# Run the Docker image locally
-	docker run --rm -p 4000:4000 \
+	docker run --rm -p $(HIVEFORGE_CONTROLLER_PORT):$(HIVEFORGE_CONTROLLER_PORT) \
 	-e MIX_ENV=prod \
 	-e HIVEFORGE_CONTROLLER_CERTFILE=$(HIVEFORGE_CONTROLLER_CERTFILE) \
 	-e HIVEFORGE_CONTROLLER_KEYFILE=$(HIVEFORGE_CONTROLLER_KEYFILE) \

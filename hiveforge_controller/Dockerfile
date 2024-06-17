@@ -1,4 +1,4 @@
-FROM quay.io/lajos_nagy/hiveforge-base-elixir:erlang-27.0-elixir-1.17.0-20240616-2143 AS compiler
+FROM quay.io/lajos_nagy/hiveforge-base-elixir:erlang-27.0-elixir-1.17.0-bookworm-20240617-1 AS compiler
 ARG APP_DIR=/app
 ARG MIX_ENV=prod
 WORKDIR $APP_DIR
@@ -30,47 +30,29 @@ RUN mix compile && \
 
 
 # Generate test certs using openssl
-RUN openssl genpkey -algorithm RSA -out ca-key.pem -pkeyopt rsa_keygen_bits:2048 && \
-    openssl req -x509 -new -nodes -key ca-key.pem -sha256 -days 3650 -out ca-cert.pem -subj "/C=UK/ST=England/L=London/O=HiveForge Corporation/OU=Operations/CN=localhost" && \
-    openssl genpkey -algorithm RSA -out server-key.pem -pkeyopt rsa_keygen_bits:2048 && \
-    openssl req -new -key server-key.pem -out server.csr -config misc/certificates/test-server-csr.conf && \
-    openssl x509 -req -in server.csr -CA ca-cert.pem -CAkey ca-key.pem -CAcreateserial -out server-cert.pem -days 365 -sha256 -extfile misc/certificates/test-server-cert.conf
+# RUN openssl genpkey -algorithm RSA -out ca-key.pem -pkeyopt rsa_keygen_bits:2048 && \
+#     openssl req -x509 -new -nodes -key ca-key.pem -sha256 -days 3650 -out ca-cert.pem -subj "/C=UK/ST=England/L=London/O=HiveForge Corporation/OU=Operations/CN=localhost" && \
+#     openssl genpkey -algorithm RSA -out server-key.pem -pkeyopt rsa_keygen_bits:2048 && \
+#     openssl req -new -key server-key.pem -out server.csr -config misc/certificates/test-server-csr.conf && \
+#     openssl x509 -req -in server.csr -CA ca-cert.pem -CAkey ca-key.pem -CAcreateserial -out server-cert.pem -days 365 -sha256 -extfile misc/certificates/test-server-cert.conf
 
 # Stage 2: runtime stage
-FROM debian:bullseye-slim AS runtime
-
-# Set environment variables for non-interactive installation
-ENV DEBIAN_FRONTEND=noninteractive
-
-# Set locale to UTF-8
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-    locales && \
-    echo "en_US.UTF-8 UTF-8" >> /etc/locale.gen && \
-    locale-gen en_US.UTF-8 && \
-    update-locale LANG=en_US.UTF-8
-
-ENV LANG=en_US.UTF-8
-ENV LANGUAGE=en_US:en
-ENV LC_ALL=en_US.UTF-8
-
-ARG MIX_ENV=prod
+FROM hexpm/erlang:27.0-debian-bookworm-20240612-slim
 
 ARG APP_DIR=/app
 ARG APP_NAME=hiveforge_controller
+ARG MIX_ENV=prod
 ARG PORT=4000
-WORKDIR /$APP_NAME
 
+WORKDIR $APP_DIR
 
-# Copy Elixir from the compile stage
-COPY --from=compiler /usr/local/elixir /usr/local/elixir
-COPY --from=compiler /usr/local/bin/erl /usr/local/lib/erl
-COPY --from=compiler /usr/local/lib/erlang/ /usr/local/lib/erlang/
+# Install openssl
+RUN apt-get update && apt-get install -y libssl3 && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Copy the app from the compile stage
 # # /app/_build/prod/rel/hiveforge_controller
 COPY --from=compiler ${APP_DIR}/_build/${MIX_ENV}/rel/${APP_NAME} ./
-ENV PATH=/usr/local/elixir/bin:/usr/local/lib:/usr/local/lib/erlang/bin:$PATH
+ENV PATH=/usr/local/elixir/bin:/usr/local/lib:$PATH
 
 # Set the working directory
 

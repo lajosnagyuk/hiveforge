@@ -1,5 +1,9 @@
-# Use the official Elixir image
-FROM debian:bullseye-slim as compiler
+# Should be using the official elixir image from hexpm, but qemu and docker have
+# a bug, which doesn't allow building on aarch64 macs, due to JIT being enabled.
+# Instead of falling back to OTP-23, I am building from source with JIT disabled,
+# which is a workaround for the issue and lets us use OTP-27 with elixir 1.17
+# built on macos docker desktop 4.26.1 (131620) on aarch64
+FROM debian:bookworm-slim as compiler
 ARG MIX_ENV=prod
 ARG APP_DIR=/app
 ARG APP_NAME=hiveforge_controller
@@ -19,7 +23,7 @@ RUN apt-get update && \
     build-essential \
     libncurses5-dev \
     libssl-dev \
-    libwxgtk3.0-gtk3-dev \
+    libwxgtk3.2-dev \
     libgl1-mesa-dev \
     libglu1-mesa-dev \
     libpng-dev \
@@ -50,8 +54,8 @@ RUN mkdir erlang && \
     git clone --branch OTP-${ERLANG_VERSION} --depth 1 --single-branch https://github.com/erlang/otp.git erlang && \
     cd erlang && \
     ./configure $(if [ "$ENABLE_JIT" = "false" ]; then echo "--disable-jit"; fi) && \
-    make && \
-    make install
+    make -j$(getconf _NPROCESSORS_ONLN) && \
+    make -j$(getconf _NPROCESSORS_ONLN) install
 
 WORKDIR /tmp
 

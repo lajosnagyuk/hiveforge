@@ -1,11 +1,11 @@
 This is HiveForge, the highly distributed, Kubernetes based build system built on Elixir and Erlang.
 
 # Legend
-Coordinator - The server / controller service. It is responsible for adding and retrieving job information, keep track of Agents. It also handles authentication.
-Agent - An agent is a disposable build engine, capable of executing jobs received from the coordinator.
-Job - Any build activity. It could be a job triggered in any fashion, regardless of whether that's recurring, based on time or push/merge activity.
-Database - The Central Nexus. The database is responsible for serving as a source of truth for all Coordinators.
-Frontend - Responsible for user sessions and displaying information retrieved from a Coordinator.
+- Coordinator - The server / controller service. It is responsible for adding and retrieving job information, keep track of Agents. It also handles authentication.
+- Agent - An agent is a disposable build engine, capable of executing jobs received from the coordinator.
+- Job - Any build activity. It could be a job triggered in any fashion, regardless of whether that's recurring, based on time or push/merge activity.
+- Database - The Central Nexus. The database is responsible for serving as a source of truth for all Coordinators.
+- Frontend - Responsible for user sessions and displaying information retrieved from a Coordinator.
 
 # Design goals
 1. Stateless coordinators. I want coordinators to be able to come and go based on service load and other considerations, without having to own the complexity that comes with stateful coordinators, such as leader election or other clustering complexities, persistent storage, etc.

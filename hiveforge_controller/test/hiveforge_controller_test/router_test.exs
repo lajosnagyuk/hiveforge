@@ -40,4 +40,13 @@ defmodule HiveforgeControllerTest.RouterTest do
     assert conn.status == 404
     assert conn.resp_body == "Mit ni?"
   end
+
+  test "active jobs 200" do
+    build_conn = conn(:get, "/api/v1/activejobs")
+    conn = HiveforgeController.Router.call(build_conn, @opts)
+
+    assert conn.state == :sent
+    assert conn.status == 200
+    assert conn.resp_body == "OK"
+  end
 end

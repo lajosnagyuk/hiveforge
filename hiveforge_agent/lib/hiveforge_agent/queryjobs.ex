@@ -4,14 +4,8 @@ defmodule HiveforgeAgent.Queryjobs do
   def queryActiveJobs do
     Logger.info("Performing scheduled job...")
 
-    api_endpoint =
-      Application.get_env(
-        :hiveforge_agent,
-        HiveforgeAgent.Queryjobs,
-        :hiveforge_controller_api_endpoint
-      )
-
-    ca_cert_path = Application.get_env(:hiveforge_agent, HiveforgeAgent.Queryjobs, :ca_cert_path)
+    api_endpoint = System.get_env("HIVEFORGE_CONTROLLER_API_ENDPOINT")
+    ca_cert_path = System.get_env("HIVEFORGE_CA_CERT_PATH")
 
     Logger.debug("API Endpoint: #{inspect(api_endpoint)}")
     Logger.debug("CA Cert Path: #{inspect(ca_cert_path)}")
@@ -23,15 +17,13 @@ defmodule HiveforgeAgent.Queryjobs do
         Logger.error("CA Cert file does not exist at: #{inspect(ca_cert_path)}")
       end
 
-      # Function to construct the URL
+      # Construct the URL
       url =
         if String.ends_with?(api_endpoint, "/") do
           "#{api_endpoint}api/v1/activejobs"
         else
           "#{api_endpoint}/api/v1/activejobs"
         end
-
-      Logger.debug("Constructed URL: #{url}")
 
       options =
         if ca_cert_path && File.exists?(ca_cert_path) do
@@ -54,7 +46,7 @@ defmodule HiveforgeAgent.Queryjobs do
           Logger.error("Request failed with status code: #{status_code}")
 
         {:error, %HTTPoison.Error{reason: reason}} ->
-          Logger.error("Request error: #{inspect(reason)}")
+          Logger.error("Request error: #{reason}")
       end
     else
       Logger.error("HIVEFORGE_CONTROLLER_API_ENDPOINT is not set")

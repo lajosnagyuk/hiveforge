@@ -41,24 +41,20 @@ defmodule HiveforgeAgent.Queryjobs do
           "#{api_endpoint}/api/v1/activejobs"
         end
 
-      options =
-        if ca_cert_path && File.exists?(ca_cert_path) do
-          [
-            ssl_options: [
-              verify: :verify_peer,
-              cacertfile: ca_cert_path,
-              depth: 3,
-              verify_fun:
-                {&:ssl_verify_hostname.verify_fun/3, [check_hostname: ~c"host.docker.internal"]}
-            ]
-          ]
-        else
-          []
-        end
-
       Logger.info("Making HTTP request to: #{url}")
 
-      case HTTPoison.get(url, [], hackney: options) do
+      opts = [
+        ssl_override: [
+          cacertfile: ca_cert_path,
+          verify: :verify_peer,
+          depth: 3,
+          secure_renegotiate: true,
+          reuse_sessions: true,
+          verify_fun: {&:ssl_verify_hostname.verify_fun/3, []}
+        ]
+      ]
+
+      case HTTPoison.get(url, [], opts) do
         {:ok, %HTTPoison.Response{status_code: 200, body: body}} ->
           Logger.info("Success: #{body}")
 

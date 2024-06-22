@@ -1,5 +1,6 @@
 # Stage 1: compiler stage
 FROM quay.io/lajos_nagy/hiveforge-base-elixir:erlang-27.0-elixir-1.17.0-bookworm-20240617-1 AS compiler
+
 ARG APP_DIR=/app
 ARG MIX_ENV=prod
 ARG APP_NAME=hiveforge_agent

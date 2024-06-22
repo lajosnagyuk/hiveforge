@@ -22,15 +22,21 @@ be found at <https://hexdocs.pm/hiveforge_controller>.
 # generate a test certificate
 ```bash
 # Generate CA key and certificate
-openssl genpkey -algorithm RSA -out misc/certificates/ca-key.pem -pkeyopt rsa_keygen_bits:2048
-openssl req -x509 -new -nodes -key misc/certificates/ca-key.pem -sha256 -days 3650 -out misc/certificates/ca-cert.pem -subj "/C=UK/ST=England/L=London/O=HiveForge Corporation/OU=Operations/CN=localhost"
+openssl genpkey -algorithm RSA -out misc/certificates/ca.key -pkeyopt rsa_keygen_bits:2048
 
-# Generate server key and CSR
-openssl genpkey -algorithm RSA -out misc/certificates/server-key.pem -pkeyopt rsa_keygen_bits:2048
-openssl req -new -key misc/certificates/server-key.pem -out misc/certificates/server.csr -config misc/certificates/test-server-csr.conf
+openssl req -x509 -new -nodes -key misc/certificates/ca.key -sha256 -days 365 -out misc/certificates/ca.crt -config misc/certificates/ca.conf
 
-# Generate server certificate
-openssl x509 -req -in misc/certificates/server.csr -CA misc/certificates/ca-cert.pem -CAkey misc/certificates/ca-key.pem -CAcreateserial -out misc/certificates/server-cert.pem -days 365 -sha256 -extfile misc/certificates/test-server-cert.conf
+
+# Generate server key and certificate
+openssl genpkey -algorithm RSA -out misc/certificates/server.key -pkeyopt rsa_keygen_bits:2048
+openssl req -new -key misc/certificates/server.key -out misc/certificates/server.csr -config misc/certificates/server_csr.conf
+
+openssl x509 -req -in misc/certificates/server.csr -CA misc/certificates/ca.crt -CAkey misc/certificates/ca.key -CAcreateserial -out misc/certificates/server.crt -days 365 -sha256 -extfile misc/certificates/server_csr.conf -extensions req_ext
+
+# Verify the certificate
+openssl x509 -in misc/certificates/server.crt -text -noout
+openssl verify -CAfile misc/certificates/ca.crt misc/certificates/server.crt
+```
 
 # Export the paths as environment variables
 export HIVEFORGE_CONTROLLER_CERTFILE=$(pwd)/misc/certificates/server-cert.pem

@@ -6,8 +6,8 @@ DOCKER_BUILDX_PLATFORMS ?= linux/amd64,linux/arm64
 DOCKER_REGISTRY ?= quay.io
 DOCKER_REPO ?= lajos_nagy/hiveforge-controller
 DOCKER_TAG ?= latest
-HIVEFORGE_CONTROLLER_CERTFILE=/hiveforge_controller/misc/certificates/test-server-cert.pem
-HIVEFORGE_CONTROLLER_KEYFILE=/hiveforge_controller/misc/certificates/test-server-key.pem
+HIVEFORGE_CONTROLLER_CERTFILE=/hiveforge_controller/misc/certificates/server.crt
+HIVEFORGE_CONTROLLER_KEYFILE=/hiveforge_controller/misc/certificates/server.key
 HIVEFORGE_CONTROLLER_PORT=4000
 
 # Docker Buildx setup

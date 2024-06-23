@@ -9,20 +9,16 @@ tunables:
   network:
   certificates:
     cacertfileMountEnabled: "false"
+    cacertfile: # base64 encoded ca-cert.pem file
 
 env:
   - name: MIX_ENV
     value: "prod"
-  - name: TLS_TERMINATION_METHOD
-    value: "service"
-    # possible values: service, internal, where service means the api exposes http and something else wraps it in tls,
-    # internal means the api exposes https directly and you'll need to set
-    # HIVEFORGE_CONTROLLER_CERTFILE=/hiveforge_controller/misc/certificates/server.crt
-    # HIVEFORGE_CONTROLLER_KEYFILE=/hiveforge_controller/misc/certificates/server.key
   - name: HIVEFORGE_CA_CERT_PATH
     value: ""
   # In-container path to the CA certificate file, if empty, http calls will be made
   # Otherwise the default is /hiveforge_agent/misc/certificates/ca-cert.pem
   # also set .Values.tunables.certificates.cacertfileMountEnabled to true when https endpoint is used
+  # also set .Values.tunables.certificates.cacertfile to the base64 encoded ca-cert.pem file
   - name: HIVEFORGE_CONTROLLER_API_ENDPOINT
-    value: "https://hiveforge-controller-service.hiveforge-controller.svc.cluster.local:80"
+    value: "http://hiveforge-controller-service.hiveforge-controller.svc.cluster.local:80"

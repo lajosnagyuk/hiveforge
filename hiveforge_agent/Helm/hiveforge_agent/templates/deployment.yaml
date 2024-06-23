@@ -18,8 +18,6 @@ spec:
         - name: {{ .Chart.Name }}
           image: "{{.Values.image.registry }}/{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
-          ports:
-            - containerPort: {{ .Values.tunables.network.targetPort }}
           env:
             {{- range .Values.env }}
             - name: {{ .name }}
@@ -36,7 +34,7 @@ spec:
         volumes:
           - name: cacertfile
             secret:
-              secretName: hivecontroller-agent-cert-secret
+              secretName: {{ .Release.name }}-cert-secret
               items:
                 - key: ca-cert.pem
                   path: ca-cert.pem

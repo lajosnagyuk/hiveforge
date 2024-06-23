@@ -6,5 +6,5 @@ config :hiveforge_agent, HiveforgeAgent.Queryjobs,
 
 config :hiveforge_agent, HiveforgeAgent.Scheduler,
   jobs: [
-    {"* * * * *", {HiveforgeAgent.Queryjobs, :queryActiveJobs, []}}
+    {{:extended, "*/10 * * * * *"}, {HiveforgeAgent.Queryjobs, :queryActiveJobs, []}}
   ]

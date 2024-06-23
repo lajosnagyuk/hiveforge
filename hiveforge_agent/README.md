@@ -1,21 +1,9 @@
 # HiveforgeAgent
 
-**TODO: Add description**
+# Release and install Helm Charts
+```bash
+helm package Helm/hiveforge_agent
+hiveforge_agent_chart_version=$(cat Helm/hiveforge_agent/Chart.yaml | grep version | awk '{print $2}')
+helm upgrade --install hiveforge-agent --namespace hiveforge-agent --create-namespace hiveforge-agent-${hiveforge_agent_chart_version}.tgz --values values-example.yaml
 
-## Installation
-
-If [available in Hex](https://hex.pm/docs/publish), the package can be installed
-by adding `hiveforge_agent` to your list of dependencies in `mix.exs`:
-
-```elixir
-def deps do
-  [
-    {:hiveforge_agent, "~> 0.1.0"}
-  ]
-end
 ```
-
-Documentation can be generated with [ExDoc](https://github.com/elixir-lang/ex_doc)
-and published on [HexDocs](https://hexdocs.pm). Once published, the docs can
-be found at <https://hexdocs.pm/hiveforge_agent>.
-

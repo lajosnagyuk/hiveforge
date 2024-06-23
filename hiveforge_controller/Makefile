@@ -6,9 +6,10 @@ DOCKER_BUILDX_PLATFORMS ?= linux/amd64,linux/arm64
 DOCKER_REGISTRY ?= quay.io
 DOCKER_REPO ?= lajos_nagy/hiveforge-controller
 DOCKER_TAG ?= latest
-HIVEFORGE_CONTROLLER_CERTFILE=/hiveforge_controller/misc/certificates/server.crt
-HIVEFORGE_CONTROLLER_KEYFILE=/hiveforge_controller/misc/certificates/server.key
-HIVEFORGE_CONTROLLER_PORT=4000
+HIVEFORGE_CONTROLLER_CERTFILE ?= /hiveforge_controller/misc/certificates/server.crt
+HIVEFORGE_CONTROLLER_KEYFILE ?= /hiveforge_controller/misc/certificates/server.key
+HIVEFORGE_CONTROLLER_PORT ?= 4000
+TLS_TERMINATION_METHOD ?= service
 
 # Docker Buildx setup
 DOCKER_BUILDX ?= docker buildx
@@ -50,6 +51,7 @@ dev-run:
 	-e MIX_ENV=prod \
 	-e HIVEFORGE_CONTROLLER_CERTFILE=$(HIVEFORGE_CONTROLLER_CERTFILE) \
 	-e HIVEFORGE_CONTROLLER_KEYFILE=$(HIVEFORGE_CONTROLLER_KEYFILE) \
+	-e TLS_TERMINATION_METHOD=$(TLS_TERMINATION_METHOD) \
 	-v ./misc/certificates:/hiveforge_controller/misc/certificates:ro \
 	$(DOCKER_REGISTRY)/$(DOCKER_REPO):$(DOCKER_TAG)
 

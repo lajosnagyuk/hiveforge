@@ -1,0 +1,47 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}
+  labels:
+    app: {{ .Release.Name }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}
+    spec:
+      containers:
+        - name: {{ .Chart.Name }}
+          image: "{{.Values.image.registry }}/{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.tunables.network.targetPort }}
+          env:
+            {{- range .Values.env }}
+            - name: {{ .name }}
+              value: {{ .value | quote }}
+            {{- end }}
+            - name: POSTGRESDB_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: "{{ .Values.tunables.database.secretName }}"
+                  key: postgres-username
+            - name: POSTGRESDB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: "{{ .Values.tunables.database.secretName }}"
+                  key: postgres-password
+            - name: PGPOOL_ADMIN_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: "{{ .Values.tunables.database.secretName }}"
+                  key: pgpool-admin-username
+            - name: PGPOOL_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: "{{ .Values.tunables.database.secretName }}"
+                  key: pgpool-admin-password

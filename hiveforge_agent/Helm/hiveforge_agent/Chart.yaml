@@ -1,0 +1,6 @@
+apiVersion: v2
+name: hiveforge-agent
+description: HiveForge is a Distributed Build System for Kubernetes, Agent is the builder/runner.
+type: application
+version: 0.0.1
+appVersion: "0.0.1"

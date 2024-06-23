@@ -1,5 +1,5 @@
 # Stage 1: compiler stage
-FROM quay.io/lajos_nagy/hiveforge-base-elixir:erlang-27.0-elixir-1.17.0-bookworm-20240617-1 AS compiler
+FROM quay.io/lajos_nagy/hiveforge-base-elixir:erlang-27.0-elixir-1.17.0-bookworm-20240623-1 AS compiler
 
 ARG APP_DIR=/app
 ARG MIX_ENV=prod
@@ -11,13 +11,23 @@ ENV MIX_ENV=$MIX_ENV
 RUN mix local.hex --force && mix local.rebar --force
 
 # Copy the mix.exs and mix.lock files to the container
-COPY mix.exs mix.lock ./
+COPY mix.exs ./
+
+
 
 # Fetch the dependencies
-RUN mix deps.get
 
 # Copy the rest of the application code to the container
 COPY . .
+
+# This ensures no cross-arch compiled libs and builds are included by mistake
+RUN rm -rf _build && \
+    rm -rf deps && \
+    rm -rf priv && \
+    rm -rf test && \
+    rm mix.lock
+
+RUN mix deps.get
 
 # Compile the application for MIX_ENV
 RUN mix compile && \

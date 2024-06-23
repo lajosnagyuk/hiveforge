@@ -1,0 +1,22 @@
+replicaCount: "1"
+image:
+  registry: "quay.io"
+  repository: "lajos_nagy/hiveforge-controller"
+  tag: "erlang-27.0-20240623-1"
+  pullPolicy: "ifNotPresent"
+
+tunables:
+  network:
+    containerPort: "4000"
+    targetPort: "443"
+    type: "ClusterIP"
+
+env:
+  - name: TLS_TERMINATION_METHOD
+    value: "service"
+    # possible values: service, internal, where service means the api exposes http and something else wraps it in tls,
+    # internal means the api exposes https directly and you'll need to set
+    # HIVEFORGE_CONTROLLER_CERTFILE=/hiveforge_controller/misc/certificates/server.crt
+    # HIVEFORGE_CONTROLLER_KEYFILE=/hiveforge_controller/misc/certificates/server.key
+  - name: HIVEFORGE_CONTROLLER_INTERNAL_SERVICE_PORT
+    value: "4000"

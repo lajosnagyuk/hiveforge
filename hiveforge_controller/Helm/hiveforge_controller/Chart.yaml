@@ -1,0 +1,6 @@
+apiVersion: v2
+name: hiveforge-controller
+description: HiveForge is a Distributed Build System for Kubernetes, Controller is the hub.
+type: application
+version: 0.1.0
+appVersion: "0.0.1"

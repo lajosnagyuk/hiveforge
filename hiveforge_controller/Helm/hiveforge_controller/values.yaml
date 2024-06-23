@@ -3,13 +3,15 @@ image:
   registry: "quay.io"
   repository: "lajos_nagy/hiveforge-controller"
   tag: "latest"
-  pullPolicy: "ifNotPresent"
+  pullPolicy: "IfNotPresent"
 
 tunables:
   network:
-    containerPort: "4000"
-    targetPort: "443"
+    targetPort: "4000"
+    servicePort: "80"
     type: "ClusterIP"
+  database:
+    secretName: "hiveforge-database-secret"
 
 env:
   - name: TLS_TERMINATION_METHOD
@@ -20,3 +22,5 @@ env:
     # HIVEFORGE_CONTROLLER_KEYFILE=/hiveforge_controller/misc/certificates/server.key
   - name: HIVEFORGE_CONTROLLER_INTERNAL_SERVICE_PORT
     value: "4000"
+  - name: POSTGRESDB_HOST
+    value: "hiveforge-database-postgresql-ha-pgpool.hiveforge-database.svc.cluster.local:5432"

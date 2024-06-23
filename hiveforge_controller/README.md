@@ -1,23 +1,5 @@
 # HiveforgeController
 
-**TODO: Add description**
-
-## Installation
-
-If [available in Hex](https://hex.pm/docs/publish), the package can be installed
-by adding `hiveforge_controller` to your list of dependencies in `mix.exs`:
-
-```elixir
-def deps do
-  [
-    {:hiveforge_controller, "~> 0.1.0"}
-  ]
-end
-```
-
-Documentation can be generated with [ExDoc](https://github.com/elixir-lang/ex_doc)
-and published on [HexDocs](https://hexdocs.pm). Once published, the docs can
-be found at <https://hexdocs.pm/hiveforge_controller>.
 
 # generate a test certificate
 ```bash
@@ -61,4 +43,12 @@ make dev-run
 HIVEFORGE_CONTROLLER_CERTFILE=/hiveforge_controller/misc/certificates/test-server-cert.pem \
 HIVEFORGE_CONTROLLER_KEYFILE=/hiveforge_controller/misc/certificates/test-server-key.pem \
 make dev-run
+```
+
+
+# Release and install Helm Charts
+```bash
+helm package Helm/hiveforge_controller
+hiveforge_controller_chart_version=$(cat Helm/hiveforge_controller/Chart.yaml | grep version | awk '{print $2}')
+helm upgrade --install hiveforge-controller --namespace hiveforge-controller hiveforge-controller-${hiveforge_controller_chart_version}.tgz --values values-example.yaml
 ```

@@ -100,6 +100,20 @@ install_kubectl() {
     fi
 }
 
+check_hiveforge_controller_secret(){
+    kubectl get secret hiveforge-database-secret --namespace hiveforge-controller
+    if [ $? -ne 0 ]; then
+        echo "Replicating secret to hiveforge-controller namespace..."
+        kubectl create secret generic hiveforge-database-secret \
+        --namespace hiveforge-controller \
+        --from-literal=postgres-password=${postgres_password} \
+        --from-literal=replication-password=${postgres_replicator_password} \
+        --from-literal=postgres-username=${postgres_user} \
+        --from-literal=pgpool-admin-username=${pgpool_admin_username} \
+        --from-literal=pgpool-admin-password=${pgpool_admin_password}
+    fi
+}
+
 install_postgres() {
     # check namespace
     kubectl get namespace hiveforge-database
@@ -126,7 +140,17 @@ install_postgres() {
         postgres_user=$(kubectl get secret hiveforge-database-secret --namespace hiveforge-database -o jsonpath="{.data.postgres-username}" | base64 --decode)
         pgpool_admin_username=$(kubectl get secret hiveforge-database-secret --namespace hiveforge-database -o jsonpath="{.data.pgpool-admin-username}" | base64 --decode)
         pgpool_admin_password=$(kubectl get secret hiveforge-database-secret --namespace hiveforge-database -o jsonpath="{.data.pgpool-admin-password}" | base64 --decode)
-
+        # check if secret is replicated to hiveforge-controller namespace
+        # if not, replicate it
+        # check namespace hiveforge-controller exists
+        kubectl get namespace hiveforge-controller
+        if [ $? -ne 0 ]; then
+            echo "namespace didn't exist, installing"
+            kubectl create namespace hiveforge-controller
+            kubectl label namespace hiveforge-controller app=hiveforge-controller
+        fi
+        kubectl get secret hiveforge-database-secret --namespace hiveforge-controller
+        check_hiveforge_controller_secret
     else
         echo "Creating secret..."
         kubectl create secret generic hiveforge-database-secret \
@@ -136,6 +160,8 @@ install_postgres() {
           --from-literal=postgres-username=${postgres_user} \
           --from-literal=pgpool-admin-username=${pgpool_admin_username} \
           --from-literal=pgpool-admin-password=${pgpool_admin_password}
+        check_hiveforge_controller_secret
+
     fi
     # add bitnami repo
     helm repo add bitnami https://charts.bitnami.com/bitnami
@@ -145,10 +171,13 @@ install_postgres() {
     --set global.postgresql.postgresqlDatabase=hiveforge-database \
     --set global.postgresql.postgresqlUsername=${postgres_user} \
     --set global.postgresql.postgresqlPassword=${postgres_password} \
+    --set postgresql.password=${postgres_password} \
     --set global.postgresql.repmgrPassword=${postgres_replicator_password} \
+    --set postgresql.repmgrPassword=${postgres_replicator_password} \
     --set postgresql.replicaCount=${postgres_replica_count} \
     --set pgpool.replicaCount=${pgpool_replica_count} \
     --set global.pgpool.adminUsername=${pgpool_admin_username} \
+    --set pgpool.adminPassword=${pgpool_admin_password} \
     --set global.pgpool.adminPassword=${pgpool_admin_password} \
     --set pgpool.enabled=true
 }

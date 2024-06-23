@@ -5,7 +5,7 @@ metadata:
 spec:
   type: {{ .Values.tunables.network.type }}
   ports:
-    - port: {{ .Values.tunables.network.containerPort }}
+    - port: {{ .Values.tunables.network.servicePort }}
       targetPort: {{ .Values.tunables.network.targetPort }}
       protocol: TCP
   selector:

@@ -1,4 +1,4 @@
-FROM quay.io/lajos_nagy/hiveforge-base-elixir:erlang-27.0-elixir-1.17.0-bookworm-20240617-1 AS compiler
+FROM quay.io/lajos_nagy/hiveforge-base-elixir:erlang-27.0-elixir-1.17.0-bookworm-20240623-1 AS compiler
 ARG APP_DIR=/app
 ARG MIX_ENV=prod
 WORKDIR $APP_DIR
@@ -10,16 +10,19 @@ RUN mix local.hex --force && mix local.rebar --force
 # Set the working directory
 
 # Copy the mix.exs and mix.lock files to the container
-COPY mix.exs mix.lock ./
-
-# Fetch the dependencies
-RUN mix deps.get
+COPY mix.exs ./
 
 # Copy the rest of the application code to the container
 COPY . .
 
 # Delete _build folder
-RUN rm -rf _build
+RUN rm -rf _build && \
+    rm -rf deps && \
+    rm -rf priv && \
+    rm -rf test && \
+    rm mix.lock
+
+RUN mix deps.get
 
 # Compile the application for MIX_ENV
 RUN mix compile && \
@@ -60,4 +63,5 @@ ENV PATH=/usr/local/elixir/bin:/usr/local/lib:$PATH
 EXPOSE $PORT
 
 # Start the application
+ENV SHELL=/bin/bash
 CMD ["bin/hiveforge_controller", "start"]

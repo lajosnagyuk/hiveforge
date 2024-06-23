@@ -1,17 +1,14 @@
 replicaCount: "1"
 image:
   registry: "quay.io"
-  repository: "lajos_nagy/hiveforge-controller"
+  repository: "lajos_nagy/hiveforge-agent"
   tag: "latest"
   pullPolicy: "IfNotPresent"
 
 tunables:
   network:
-    targetPort: "4000"
-    servicePort: "80"
-    type: "ClusterIP"
-  database:
-    secretName: "hiveforge-database-secret"
+  certificates:
+    cacertfileMountEnabled: "false"
 
 env:
   - name: MIX_ENV
@@ -22,7 +19,10 @@ env:
     # internal means the api exposes https directly and you'll need to set
     # HIVEFORGE_CONTROLLER_CERTFILE=/hiveforge_controller/misc/certificates/server.crt
     # HIVEFORGE_CONTROLLER_KEYFILE=/hiveforge_controller/misc/certificates/server.key
-  - name: HIVEFORGE_CONTROLLER_INTERNAL_SERVICE_PORT
-    value: "4000"
-  - name: POSTGRESDB_HOST
-    value: "hiveforge-database-postgresql-ha-pgpool.hiveforge-database.svc.cluster.local:5432"
+  - name: HIVEFORGE_CA_CERT_PATH
+    value: ""
+  # In-container path to the CA certificate file, if empty, http calls will be made
+  # Otherwise the default is /hiveforge_agent/misc/certificates/ca-cert.pem
+  # also set .Values.tunables.certificates.cacertfileMountEnabled to true when https endpoint is used
+  - name: HIVEFORGE_CONTROLLER_API_ENDPOINT
+    value: "https://hiveforge-controller-service.hiveforge-controller.svc.cluster.local:80"

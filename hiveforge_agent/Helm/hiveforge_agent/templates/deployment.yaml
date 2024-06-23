@@ -1,0 +1,43 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}
+  labels:
+    app: {{ .Release.Name }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}
+    spec:
+      containers:
+        - name: {{ .Chart.Name }}
+          image: "{{.Values.image.registry }}/{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.tunables.network.targetPort }}
+          env:
+            {{- range .Values.env }}
+            - name: {{ .name }}
+              value: {{ .value | quote }}
+            {{- end }}
+            {{- if eq (lower .Values.tunables.certificates.cacertfileMountEnabled) "true" }}
+            volumeMounts:
+              - name: cacertfile
+                mountPath: /hiveforge_agent/misc/certificates/ca-cert.pem
+                subPath: ca-cert.pem
+                readOnly: true
+            {{- end }}
+        {{- if eq (lower .Values.tunables.certificates.cacertfileMountEnabled) "true" }}
+        volumes:
+          - name: cacertfile
+            secret:
+              secretName: hivecontroller-agent-cert-secret
+              items:
+                - key: ca-cert.pem
+                  path: ca-cert.pem
+        {{- end }}

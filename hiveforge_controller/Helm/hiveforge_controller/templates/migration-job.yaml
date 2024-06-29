@@ -1,0 +1,33 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: hiveforge-db-setup
+spec:
+  template:
+    metadata:
+      name: db-setup
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: db-setup
+        image: "{{.Values.migration.image.registry }}/{{ .Values.migration.image.repository }}:{{ .Values.migration.image.tag }}"
+        command: ["/bin/sh", "-c", "./migrate.sh && sleep 3600"]
+        env:
+          {{- range .Values.env }}
+          - name: {{ .name }}
+            value: {{ .value | quote }}
+          {{- end }}
+          - name: PGPOOL_USERNAME
+            valueFrom:
+              secretKeyRef:
+                name: "{{ .Values.tunables.database.secretName }}"
+                key: postgres-username
+          - name: PGPOOL_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: "{{ .Values.tunables.database.secretName }}"
+                key: postgres-password
+          - name: PGPOOL_PORT
+            value: "{{ .Values.tunables.network.pgpoolPort }}"
+          - name: PGPOOL_DATABASE
+            value: "{{ .Values.tunables.database.name }}"

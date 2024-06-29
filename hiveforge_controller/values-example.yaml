@@ -1,17 +1,27 @@
-replicaCount: "3"
+replicaCount: "1"
 image:
   registry: "quay.io"
   repository: "lajos_nagy/hiveforge-controller"
-  tag: "erlang-27.0-20240623-7"
+  tag: "erlang-27.0-20240629-33"
   pullPolicy: "IfNotPresent"
+
+migration:
+  image:
+    registry: "quay.io"
+    repository: "lajos_nagy/hiveforge-database-migrations"
+    tag: "erlang-27.0-20240629-33"
+    pullPolicy: "IfNotPresent"
 
 tunables:
   network:
     targetPort: "4000"
     servicePort: "80"
+    postgresPort: "5432"
+    pgpoolPort: "5432"
     type: "ClusterIP"
   database:
     secretName: "hiveforge-database-secret"
+    name: "hiveforge-controller"
 
 env:
   - name: TLS_TERMINATION_METHOD
@@ -23,4 +33,10 @@ env:
   - name: HIVEFORGE_CONTROLLER_INTERNAL_SERVICE_PORT
     value: "4000"
   - name: POSTGRESDB_HOST
-    value: "hiveforge-database-postgresql-ha-pgpool.hiveforge-database.svc.cluster.local:5432"
+    value: "hiveforge-database-postgresql-ha-pgpool.hiveforge-database.svc.cluster.local"
+  - name: PGPOOL_HOST
+    value: "hiveforge-database-postgresql-ha-pgpool.hiveforge-database.svc.cluster.local"
+  - name: POSTGRESDB_PORT
+    value: "5432"
+  - name: RELEASE_CONFIG_DIR
+    value: /app/config

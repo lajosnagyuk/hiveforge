@@ -7,7 +7,6 @@ defmodule HiveforgeController.Router do
 
   plug(Plug.Parsers,
     parsers: [:json],
-    pass: ["application/json"],
     json_decoder: Jason
   )
 
@@ -17,7 +16,12 @@ defmodule HiveforgeController.Router do
 
   get("/api/v1/health", do: send_resp(conn, 200, "OK"))
   get("/api/v1/readiness", do: send_resp(conn, 200, "OK"))
-  get("/api/v1/activejobs", do: send_resp(conn, 200, "OK"))
 
+  get "/api/v1/jobs" do
+    jobs = HiveforgeController.Execute.list_jobs()
+    send_resp(conn, 200, Jason.encode!(jobs))
+  end
+
+  post("/api/v1/jobs", do: HiveforgeController.JobController.create_job(conn))
   match(_, do: send_resp(conn, 404, "Mit ni?"))
 end

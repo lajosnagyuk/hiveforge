@@ -5,6 +5,7 @@ APP_NAME ?= hiveforge_agent
 DOCKER_BUILDX_PLATFORMS ?= linux/amd64,linux/arm64
 DOCKER_REGISTRY ?= quay.io
 DOCKER_REPO ?= lajos_nagy/hiveforge-agent
+# YYYYMMDD-SERIAL    20240623-9
 DOCKER_TAG ?= latest
 HIVEFORGE_CONTROLLER_API_ENDPOINT ?= https://host.docker.internal:4000/
 HIVEFORGE_CA_CERT_PATH ?= /hiveforge_agent/misc/certificates/ca-cert.pem

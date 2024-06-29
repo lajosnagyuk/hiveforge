@@ -47,9 +47,9 @@ defmodule HiveforgeAgent.Queryjobs do
 
   defp build_url(api_endpoint) do
     if String.ends_with?(api_endpoint, "/") do
-      "#{api_endpoint}api/v1/activejobs"
+      "#{api_endpoint}api/v1/jobs"
     else
-      "#{api_endpoint}/api/v1/activejobs"
+      "#{api_endpoint}/api/v1/jobs"
     end
   end
 

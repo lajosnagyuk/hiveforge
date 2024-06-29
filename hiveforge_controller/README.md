@@ -50,5 +50,7 @@ make dev-run
 ```bash
 helm package Helm/hiveforge_controller
 hiveforge_controller_chart_version=$(cat Helm/hiveforge_controller/Chart.yaml | grep version | awk '{print $2}')
+# delete hiveforge-db-setup job first
+kubectl delete job hiveforge-db-setup -n hiveforge-controller
 helm upgrade --install hiveforge-controller --namespace hiveforge-controller hiveforge-controller-${hiveforge_controller_chart_version}.tgz --values values-example.yaml
 ```

@@ -111,6 +111,7 @@ check_hiveforge_controller_secret(){
         --from-literal=postgres-username=${postgres_user} \
         --from-literal=pgpool-admin-username=${pgpool_admin_username} \
         --from-literal=pgpool-admin-password=${pgpool_admin_password}
+
     fi
 }
 
@@ -122,9 +123,9 @@ install_postgres() {
         kubectl create namespace hiveforge-database
         kubectl label namespace hiveforge-database app=hiveforge-database
     fi
-    postgres_password=$(openssl rand -base64 12)
     postgres_replicator_password=$(openssl rand -base64 12)
     postgres_user=hiveforgecontroller
+    postgres_password=$(openssl rand -base64 12)
     postgres_database=hiveforge-database
     postgres_replica_count=3
     pgpool_replica_count=3
@@ -140,6 +141,7 @@ install_postgres() {
         postgres_user=$(kubectl get secret hiveforge-database-secret --namespace hiveforge-database -o jsonpath="{.data.postgres-username}" | base64 --decode)
         pgpool_admin_username=$(kubectl get secret hiveforge-database-secret --namespace hiveforge-database -o jsonpath="{.data.pgpool-admin-username}" | base64 --decode)
         pgpool_admin_password=$(kubectl get secret hiveforge-database-secret --namespace hiveforge-database -o jsonpath="{.data.pgpool-admin-password}" | base64 --decode)
+
         # check if secret is replicated to hiveforge-controller namespace
         # if not, replicate it
         # check namespace hiveforge-controller exists
@@ -169,9 +171,8 @@ install_postgres() {
     --namespace ${postgres_database} \
     --version ${POSTGRES_CHART_VERSION} \
     --set global.postgresql.postgresqlDatabase=hiveforge-database \
-    --set global.postgresql.postgresqlUsername=${postgres_user} \
-    --set global.postgresql.postgresqlPassword=${postgres_password} \
-    --set postgresql.password=${postgres_password} \
+    --set global.postgresql.username=${postgres_user} \
+    --set global.postgresql.password=${postgres_password} \
     --set global.postgresql.repmgrPassword=${postgres_replicator_password} \
     --set postgresql.repmgrPassword=${postgres_replicator_password} \
     --set postgresql.replicaCount=${postgres_replica_count} \
@@ -179,7 +180,9 @@ install_postgres() {
     --set global.pgpool.adminUsername=${pgpool_admin_username} \
     --set pgpool.adminPassword=${pgpool_admin_password} \
     --set global.pgpool.adminPassword=${pgpool_admin_password} \
-    --set pgpool.enabled=true
+    --set pgpool.enabled=true \
+    --set pgpool.customUsers.usernames="${postgres_user}" \
+    --set pgpool.customUsers.passwords="${postgres_password}"
 }
 
 main() {

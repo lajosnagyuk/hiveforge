@@ -5,17 +5,25 @@ image:
   tag: "latest"
   pullPolicy: "IfNotPresent"
 
+migration:
+  image:
+    registry: "quay.io"
+    repository: "lajos_nagy/hiveforge-database-migrations"
+    tag: "latest"
+    pullPolicy: "IfNotPresent"
+
 tunables:
   network:
     targetPort: "4000"
     servicePort: "80"
+    postgresPort: "5432"
+    pgpoolPort: "5432"
     type: "ClusterIP"
   database:
     secretName: "hiveforge-database-secret"
+    name: "hiveforge-controller"
 
 env:
-  - name: MIX_ENV
-    value: "prod"
   - name: TLS_TERMINATION_METHOD
     value: "service"
     # possible values: service, internal, where service means the api exposes http and something else wraps it in tls,
@@ -25,4 +33,10 @@ env:
   - name: HIVEFORGE_CONTROLLER_INTERNAL_SERVICE_PORT
     value: "4000"
   - name: POSTGRESDB_HOST
-    value: "hiveforge-database-postgresql-ha-pgpool.hiveforge-database.svc.cluster.local:5432"
+    value: "hiveforge-database-postgresql-ha-pgpool.hiveforge-database.svc.cluster.local"
+  - name: PGPOOL_HOST
+    value: "hiveforge-database-postgresql-ha-pgpool.hiveforge-database.svc.cluster.local"
+  - name: POSTGRESDB_PORT
+    value: "5432"
+  - name: RELEASE_CONFIG_DIR
+    value: /app/config

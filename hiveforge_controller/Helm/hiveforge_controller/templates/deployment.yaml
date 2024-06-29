@@ -35,13 +35,19 @@ spec:
                 secretKeyRef:
                   name: "{{ .Values.tunables.database.secretName }}"
                   key: postgres-password
-            - name: PGPOOL_ADMIN_USERNAME
+            - name: PGPOOL_USERNAME
               valueFrom:
                 secretKeyRef:
                   name: "{{ .Values.tunables.database.secretName }}"
-                  key: pgpool-admin-username
-            - name: PGPOOL_ADMIN_PASSWORD
+                  key: postgres-username
+            - name: PGPOOL_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: "{{ .Values.tunables.database.secretName }}"
-                  key: pgpool-admin-password
+                  key: postgres-password
+            - name: PGPOOL_PORT
+              value: "{{ .Values.tunables.network.pgpoolPort }}"
+            - name: POSTGRESDB_PORT
+              value: "{{ .Values.tunables.network.postgresPort }}"
+            - name: PGPOOL_DATABASE
+              value: "{{ .Values.tunables.database.name }}"

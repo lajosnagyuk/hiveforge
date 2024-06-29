@@ -11,10 +11,20 @@ defmodule HiveforgeController.MixProject do
     ]
   end
 
+  def release do
+    [
+      hiveforge_controller: [
+        include_executables_for: [:unix],
+        applications: [runtime_tools: :permanent],
+        steps: [:assemble, :tar]
+      ]
+    ]
+  end
+
   # Run "mix help compile.app" to learn about applications.
   def application do
     [
-      extra_applications: [:logger],
+      extra_applications: [:logger, :runtime_tools, :ecto, :ecto_sql],
       mod: {HiveforgeController.Application, []}
     ]
   end
@@ -23,7 +33,10 @@ defmodule HiveforgeController.MixProject do
   defp deps do
     [
       {:plug_cowboy, "~> 2.7"},
-      {:jason, "~> 1.4"}
+      {:jason, "~> 1.4"},
+      {:ecto, "~> 3.11"},
+      {:postgrex, "~> 0.18"},
+      {:ecto_sql, "~> 3.11"}
     ]
   end
 end

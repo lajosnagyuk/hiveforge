@@ -6,5 +6,6 @@ config :hiveforge_agent, HiveforgeAgent.Queryjobs,
 
 config :hiveforge_agent, HiveforgeAgent.Scheduler,
   jobs: [
-    {{:extended, "*/10 * * * * *"}, {HiveforgeAgent.Queryjobs, :queryActiveJobs, []}}
+    {{:extended, "*/10 * * * * *"}, {HiveforgeAgent.Queryjobs, :queryActiveJobs, []}},
+    {{:extended, "*/20 * * * * *"}, {HiveforgeAgent.Heartbeat, :send_heartbeat, []}}
   ]

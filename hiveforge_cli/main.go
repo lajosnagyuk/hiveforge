@@ -1,17 +1,17 @@
 package main
 
 import (
-    "bytes"
-    "encoding/base64"
-    "encoding/json"
-    "errors"
-    "flag"
-    "fmt"
-    "io/ioutil"
-    "net/http"
-    "os"
-    "os/user"
-    "path/filepath"
+	"bytes"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"flag"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"os/user"
+	"path/filepath"
 )
 
 // Config represents the application configuration
@@ -24,13 +24,24 @@ type Config struct {
 
 // Job represents a job retrieved from the API
 type Job struct {
-	Id                   int      `json:"id"`
-	Name                 string   `json:"name"`
-	Description          string   `json:"description"`
-	Status               string   `json:"status"`
+	Id                   int       `json:"id"`
+	Name                 string    `json:"name"`
+	Description          string    `json:"description"`
+	Status               string    `json:"status"`
 	RequestedCapabilities []string `json:"requested_capabilities"`
-	InsertedAt           string   `json:"inserted_at"`
-	UpdatedAt            string   `json:"updated_at"`
+	InsertedAt           string    `json:"inserted_at"`
+	UpdatedAt            string    `json:"updated_at"`
+}
+
+type Agent struct {
+    ID         			int       `json:"id"`
+    Name       			string    `json:"name"`
+    AgentID   			string    `json:"agent_id"`
+    Capabilities 		[]string  `json:"capabilities"`
+    Status     			string    `json:"status"`
+    LastHeartbeat 		string 	  `json:"last_heartbeat"`
+    InsertedAt 			string    `json:"inserted_at"`
+    UpdatedAt  			string    `json:"updated_at"`
 }
 
 // loadConfig loads the configuration from a file
@@ -49,7 +60,7 @@ func loadConfig() (Config, error) {
 
 	for _, path := range configPaths {
 		if _, err := os.Stat(path); err == nil {
-			file, err := ioutil.ReadFile(path)
+			file, err := os.ReadFile(path)
 			if err != nil {
 				return Config{}, err
 			}
@@ -80,7 +91,7 @@ func getJobs(config Config) ([]Job, error) {
 
     fmt.Printf("HTTP Status: %d\n", resp.StatusCode)  // Debug print
 
-    body, err := ioutil.ReadAll(resp.Body)
+    body, err := io.ReadAll(resp.Body)
     if err != nil {
         return nil, fmt.Errorf("failed to read response body: %v", err)
     }
@@ -114,7 +125,7 @@ func describeJob(config Config, id string) error {
 
     fmt.Printf("HTTP Status: %d\n", resp.StatusCode)
 
-    body, err := ioutil.ReadAll(resp.Body)
+    body, err := io.ReadAll(resp.Body)
     if err != nil {
         return fmt.Errorf("failed to read response body: %v", err)
     }
@@ -198,7 +209,7 @@ func printRow(row []string, widths []int) {
 
 func createJob(config Config, jsonFilePath string) error {
 	// Read the JSON file
-	jsonData, err := ioutil.ReadFile(jsonFilePath)
+	jsonData, err := os.ReadFile(jsonFilePath)
 	if err != nil {
 		return fmt.Errorf("error reading JSON file: %v", err)
 	}
@@ -220,7 +231,7 @@ func createJob(config Config, jsonFilePath string) error {
 	}
 	defer resp.Body.Close()
 
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return err
 	}
@@ -238,6 +249,96 @@ func createJob(config Config, jsonFilePath string) error {
 	return nil
 }
 
+func getAgents(config Config) ([]Agent, error) {
+    url := fmt.Sprintf("http://%s:%d/api/v1/agents", config.ApiEndpoint, config.Port)
+    resp, err := http.Get(url)
+    if err != nil {
+        return nil, err
+    }
+    defer resp.Body.Close()
+
+    body, err := io.ReadAll(resp.Body)
+    if err != nil {
+        return nil, err
+    }
+
+    if config.Debug {
+        fmt.Println("Raw API response:")
+        fmt.Println(string(body))
+    }
+
+    var agents []Agent
+    err = json.Unmarshal(body, &agents)
+    if err != nil {
+        return nil, err
+    }
+
+    return agents, nil
+}
+
+func getAgent(config Config, id string) (*Agent, error) {
+    url := fmt.Sprintf("http://%s:%d/api/v1/agents/%s", config.ApiEndpoint, config.Port, id)
+    resp, err := http.Get(url)
+    if err != nil {
+        return nil, err
+    }
+    defer resp.Body.Close()
+
+    body, err := io.ReadAll(resp.Body)
+    if err != nil {
+        return nil, err
+    }
+
+    if config.Debug {
+        fmt.Println("Raw API response:")
+        fmt.Println(string(body))
+    }
+
+    var agent Agent
+    err = json.Unmarshal(body, &agent)
+    if err != nil {
+        return nil, err
+    }
+
+    return &agent, nil
+}
+
+func displayAgents(agents []Agent) {
+    headers := []string{"ID", "Name", "Agent ID", "Status", "Last Heartbeat"}
+    maxWidths := make([]int, len(headers))
+    copy(maxWidths, []int{2, 4, 8, 6, 14})
+
+    for _, agent := range agents {
+        maxWidths[0] = max(maxWidths[0], len(fmt.Sprint(agent.ID)))
+        maxWidths[1] = max(maxWidths[1], len(agent.Name))
+        maxWidths[2] = max(maxWidths[2], len(agent.AgentID))
+        maxWidths[3] = max(maxWidths[3], len(agent.Status))
+        if agent.LastHeartbeat != "" {
+            maxWidths[4] = max(maxWidths[4], len(agent.LastHeartbeat))
+        }
+    }
+
+    printSeparator(maxWidths)
+    printRow(headers, maxWidths)
+    printSeparator(maxWidths)
+
+    for _, agent := range agents {
+        lastHeartbeat := ""
+        if agent.LastHeartbeat != "" {
+            lastHeartbeat = agent.LastHeartbeat
+        }
+        row := []string{
+            fmt.Sprint(agent.ID),
+            agent.Name,
+            agent.AgentID,
+            agent.Status,
+            lastHeartbeat,
+        }
+        printRow(row, maxWidths)
+    }
+
+    printSeparator(maxWidths)
+}
 
 func main() {
 	debug := flag.Bool("debug", false, "Enable debug mode")
@@ -298,7 +399,39 @@ func main() {
         fmt.Printf("Error describing job: %v\n", err)
     }
 
-	default:
-		fmt.Println("Invalid command. Usage: hiveforgectl [get jobs | create job <json_file>] [-d|--debug]")
-	}
+    case args[0] == "get" && args[1] == "agents":
+        fmt.Println("Fetching agents...")
+        agents, err := getAgents(config)
+        if err != nil {
+            fmt.Printf("Error fetching agents: %v\n", err)
+            return
+        }
+        if len(agents) == 0 {
+            fmt.Println("No agents found.")
+        } else {
+            fmt.Printf("Retrieved %d agents. Displaying...\n", len(agents))
+            displayAgents(agents)
+        }
+
+    case args[0] == "describe" && args[1] == "agent":
+        if len(args) < 3 {
+            fmt.Println("Usage: hiveforgectl describe agent <id> [-d|--debug]")
+            return
+        }
+        agentID := args[2]
+        agent, err := getAgent(config, agentID)
+        if err != nil {
+            fmt.Printf("Error describing agent: %v\n", err)
+            return
+        }
+        agentJSON, err := json.MarshalIndent(agent, "", "  ")
+        if err != nil {
+            fmt.Printf("Error formatting agent data: %v\n", err)
+            return
+        }
+        fmt.Println(string(agentJSON))
+
+    default:
+        fmt.Println("Invalid command. Usage: hiveforgectl [get jobs | create job <json_file> | describe job <id> | get agents | describe agent <id>] [-d|--debug]")
+    }
 }

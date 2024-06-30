@@ -1,73 +1,71 @@
 defmodule HiveforgeController.JobController do
   import Plug.Conn
-  alias HiveforgeController.{Job, Repo}
+  alias HiveforgeController.JobService
 
-  def create_job(conn) do
-    IO.puts("Received params: #{inspect(conn.body_params)}")
+  def init(opts), do: opts
 
-    with %{"body" => encoded_body} <- conn.body_params,
-         {:ok, decoded} <- Base.decode64(encoded_body),
-         {:ok, attrs} <- Jason.decode(decoded),
-         {:ok, job} <- create_job_from_attrs(attrs) do
+  def call(conn, opts) do
+    action = Keyword.fetch!(opts, :action)
+    apply(__MODULE__, action, [conn, conn.params])
+  end
+
+  def create_job(conn, params) do
+    with {:ok, decoded} <- decode_body(params),
+         {:ok, job} <- JobService.create_job(decoded) do
       conn
       |> put_status(:created)
-      |> put_resp_content_type("application/json")
-      |> send_resp(201, Jason.encode!(job))
+      |> json_response(job)
     else
-      :error ->
-        IO.puts("Invalid base64 encoding")
-        send_resp(conn, 400, "Invalid base64 encoding")
-
-      {:error, %Jason.DecodeError{} = e} ->
-        IO.puts("JSON decode error: #{inspect(e)}")
-        send_resp(conn, 400, "Invalid JSON: #{inspect(e)}")
-
-      {:error, %Ecto.Changeset{} = changeset} ->
+      {:error, :invalid_encoding} ->
+        error_response(conn, :bad_request, "Invalid base64 encoding")
+      {:error, :invalid_json} ->
+        error_response(conn, :bad_request, "Invalid JSON")
+      {:error, changeset} ->
         errors = Ecto.Changeset.traverse_errors(changeset, fn {msg, _opts} -> msg end)
-        IO.puts("Changeset errors: #{inspect(errors)}")
-        send_resp(conn, 400, Jason.encode!(%{errors: errors}))
-
-      error ->
-        IO.puts("Unexpected error: #{inspect(error)}")
-        send_resp(conn, 500, "Internal Server Error")
+        error_response(conn, :bad_request, %{errors: errors})
     end
   end
 
-  defp create_job_from_attrs(attrs) do
-    %Job{}
-    |> Job.changeset(attrs)
-    |> Repo.insert()
+  def list_jobs(conn, _params) do
+    jobs = JobService.list_jobs()
+    json_response(conn, jobs)
   end
 
-  # Keep the debug version for troubleshooting
-  def create_job(conn, :debug) do
-    IO.puts("Attempting to read body")
-
-    case read_body(conn) do
-      {:ok, body, _conn} ->
-        IO.inspect(body, label: "Raw Body")
-
-        case Jason.decode(body) do
-          {:ok, decoded} ->
-            IO.inspect(decoded, label: "Decoded JSON")
-            send_resp(conn, 200, "JSON processed successfully")
-
-          {:error, %Jason.DecodeError{} = e} ->
-            IO.puts("JSON decode error: #{inspect(e)}")
-            send_resp(conn, 400, "Invalid JSON: #{inspect(e)}")
-        end
-
-      {:more, _partial_body, _conn} ->
-        IO.puts("Body read error: more data needed")
-        send_resp(conn, 413, "Request Entity Too Large")
-
-      {:error, reason} ->
-        IO.inspect(reason, label: "Body Read Error")
-        send_resp(conn, 500, "Internal Server Error: #{inspect(reason)}")
+  def get_job(conn, %{"id" => id}) do
+    case JobService.get_job(String.to_integer(id)) do
+      {:ok, job} ->
+        conn
+        |> put_status(:ok)
+        |> json_response(job)
+      {:error, :not_found} ->
+        conn
+        |> put_status(:not_found)
+        |> json_response(%{error: "Job not found"})
     end
-  rescue
-    e ->
-      IO.inspect(e, label: "Unexpected Error")
-      send_resp(conn, 500, "Internal Server Error: #{inspect(e)}")
+  end
+
+
+  defp decode_body(%{"body" => encoded_body}) do
+    with {:ok, decoded} <- Base.decode64(encoded_body),
+         {:ok, attrs} <- Jason.decode(decoded) do
+      {:ok, attrs}
+    else
+      :error -> {:error, :invalid_encoding}
+      {:error, %Jason.DecodeError{}} -> {:error, :invalid_json}
+    end
+  end
+
+  defp decode_body(_), do: {:error, :invalid_encoding}
+
+  defp json_response(conn, data) do
+    conn
+    |> put_resp_content_type("application/json")
+    |> send_resp(conn.status || 200, Jason.encode!(data))
+  end
+
+  defp error_response(conn, status, message) do
+    conn
+    |> put_status(status)
+    |> json_response(%{error: message})
   end
 end

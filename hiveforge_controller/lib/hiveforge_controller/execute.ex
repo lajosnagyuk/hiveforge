@@ -1,3 +1,7 @@
+# Description: This module is responsible for creating, getting and listing jobs in
+# the database. The create_job function creates a new job in the database. The get_job!
+# function retrieves a job by its ID. The list_jobs function lists all jobs in the database.
+
 defmodule HiveforgeController.Execute do
   import Ecto.Query, warn: false
   alias HiveforgeController.Repo

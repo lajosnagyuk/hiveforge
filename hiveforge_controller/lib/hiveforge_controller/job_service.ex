@@ -8,7 +8,12 @@ defmodule HiveforgeController.JobService do
     |> Repo.insert()
   end
 
-  def get_job!(id), do: Repo.get!(Job, id)
+  def get_job(id) do
+    case Repo.get(Job, id) do
+      nil -> {:error, :not_found}
+      job -> {:ok, job}
+    end
+  end
 
   def list_jobs do
     Job

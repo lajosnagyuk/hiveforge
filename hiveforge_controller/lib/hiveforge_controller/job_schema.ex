@@ -12,6 +12,7 @@ defmodule HiveforgeController.Job do
              :inserted_at,
              :updated_at
            ]}
+
   schema "job" do
     field(:name, :string)
     field(:description, :string)

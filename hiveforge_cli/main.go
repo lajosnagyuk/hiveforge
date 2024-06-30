@@ -1,15 +1,17 @@
 package main
 
 import (
-	"encoding/json"
-	"errors"
-	"flag"
-	"fmt"
-	"io/ioutil"
-	"net/http"
-	"os"
-	"os/user"
-	"path/filepath"
+    "bytes"
+    "encoding/base64"
+    "encoding/json"
+    "errors"
+    "flag"
+    "fmt"
+    "io/ioutil"
+    "net/http"
+    "os"
+    "os/user"
+    "path/filepath"
 )
 
 // Config represents the application configuration
@@ -67,31 +69,69 @@ func loadConfig() (Config, error) {
 
 // getJobs retrieves jobs from the API
 func getJobs(config Config) ([]Job, error) {
-	url := fmt.Sprintf("http://%s:%d/api/v1/jobs", config.ApiEndpoint, config.Port)
-	resp, err := http.Get(url)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
+    url := fmt.Sprintf("http://%s:%d/api/v1/jobs", config.ApiEndpoint, config.Port)
+    fmt.Printf("Requesting URL: %s\n", url)  // Debug print
 
-	body, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
+    resp, err := http.Get(url)
+    if err != nil {
+        return nil, fmt.Errorf("HTTP request failed: %v", err)
+    }
+    defer resp.Body.Close()
 
-	// Print the raw API response if debug mode is enabled
-	if config.Debug {
-		fmt.Println("Raw API response:")
-		fmt.Println(string(body))
-	}
+    fmt.Printf("HTTP Status: %d\n", resp.StatusCode)  // Debug print
 
-	var jobs []Job
-	err = json.Unmarshal(body, &jobs)
-	if err != nil {
-		return nil, err
-	}
+    body, err := ioutil.ReadAll(resp.Body)
+    if err != nil {
+        return nil, fmt.Errorf("failed to read response body: %v", err)
+    }
 
-	return jobs, nil
+    // Print the raw API response
+    fmt.Println("Raw API response:")
+    fmt.Println(string(body))
+
+    var jobs []Job
+    err = json.Unmarshal(body, &jobs)
+    if err != nil {
+        fmt.Println("Failed to unmarshal JSON. Raw response:")
+        fmt.Println(string(body))
+        return nil, fmt.Errorf("failed to parse JSON: %v", err)
+    }
+
+    fmt.Printf("Number of jobs retrieved: %d\n", len(jobs))  // Debug print
+
+    return jobs, nil
+}
+
+func describeJob(config Config, id string) error {
+    url := fmt.Sprintf("http://%s:%d/api/v1/jobs/%s", config.ApiEndpoint, config.Port, id)
+    fmt.Printf("Requesting URL: %s\n", url)
+
+    resp, err := http.Get(url)
+    if err != nil {
+        return fmt.Errorf("HTTP request failed: %v", err)
+    }
+    defer resp.Body.Close()
+
+    fmt.Printf("HTTP Status: %d\n", resp.StatusCode)
+
+    body, err := ioutil.ReadAll(resp.Body)
+    if err != nil {
+        return fmt.Errorf("failed to read response body: %v", err)
+    }
+
+    if resp.StatusCode != http.StatusOK {
+        return fmt.Errorf("API returned non-OK status: %d, body: %s", resp.StatusCode, string(body))
+    }
+
+    // Pretty print the JSON
+    var prettyJSON bytes.Buffer
+    err = json.Indent(&prettyJSON, body, "", "  ")
+    if err != nil {
+        return fmt.Errorf("failed to pretty print JSON: %v", err)
+    }
+
+    fmt.Println(prettyJSON.String())
+    return nil
 }
 
 // displayJobs displays jobs in a formatted table
@@ -156,18 +196,59 @@ func printRow(row []string, widths []int) {
 	fmt.Println()
 }
 
+func createJob(config Config, jsonFilePath string) error {
+	// Read the JSON file
+	jsonData, err := ioutil.ReadFile(jsonFilePath)
+	if err != nil {
+		return fmt.Errorf("error reading JSON file: %v", err)
+	}
+
+	// Validate JSON
+	var job map[string]interface{}
+	if err := json.Unmarshal(jsonData, &job); err != nil {
+		return fmt.Errorf("invalid JSON: %v", err)
+	}
+
+	// Encode the JSON in base64
+	encodedJob := base64.StdEncoding.EncodeToString(jsonData)
+	requestBody := fmt.Sprintf(`{"body":"%s"}`, encodedJob)
+
+	url := fmt.Sprintf("http://%s:%d/api/v1/jobs", config.ApiEndpoint, config.Port)
+	resp, err := http.Post(url, "application/json", bytes.NewBufferString(requestBody))
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+
+	if config.Debug {
+		fmt.Println("Raw API response:")
+		fmt.Println(string(body))
+	}
+
+	if resp.StatusCode != http.StatusCreated {
+		return fmt.Errorf("failed to create job: %s", string(body))
+	}
+
+	fmt.Println("Job created successfully")
+	return nil
+}
+
+
 func main() {
-	// Define and parse the debug flag
 	debug := flag.Bool("debug", false, "Enable debug mode")
 	flag.Parse()
 
 	args := flag.Args()
-	if len(args) < 2 || args[0] != "get" || args[1] != "jobs" {
-		fmt.Println("Usage: hiveforgectl get jobs [-d|--debug]")
+	if len(args) < 2 {
+		fmt.Println("Usage: hiveforgectl [get jobs | create job <json_file>] [-d|--debug]")
 		return
 	}
 
-	// Load configuration
 	config, err := loadConfig()
 	if err != nil {
 		fmt.Println("Error loading config:", err)
@@ -175,22 +256,49 @@ func main() {
 	}
 	config.Debug = *debug
 
-	// Confirm if debug mode is enabled
 	if config.Debug {
 		fmt.Println("Debug mode is enabled")
 	}
 
-	// Retrieve jobs from the API
-	jobs, err := getJobs(config)
-	if err != nil {
-		fmt.Println("Error:", err)
-		return
-	}
+	switch {
+	case args[0] == "get" && args[1] == "jobs":
+    fmt.Println("Fetching jobs...")
+    jobs, err := getJobs(config)
+    if err != nil {
+        fmt.Printf("Error fetching jobs: %v\n", err)
+        return
+    }
 
-	// Display the jobs
-	if len(jobs) == 0 {
-		fmt.Println("No jobs found.")
-	} else {
-		displayJobs(jobs)
+    if len(jobs) == 0 {
+        fmt.Println("No jobs found.")
+    } else {
+        fmt.Printf("Retrieved %d jobs. Displaying...\n", len(jobs))
+        displayJobs(jobs)
+    }
+	case args[0] == "create" && args[1] == "job":
+		if len(args) < 3 {
+			fmt.Println("Usage: hiveforgectl create job <json_file> [-d|--debug]")
+			return
+		}
+		jsonFilePath := args[2]
+		err := createJob(config, jsonFilePath)
+		if err != nil {
+			fmt.Println("Error creating job:", err)
+		}
+
+	case args[0] == "describe" && args[1] == "job":
+    if len(args) < 3 {
+        fmt.Println("Usage: hiveforgectl describe job <id> [-d|--debug]")
+        return
+    }
+
+    jobID := args[2]
+    err := describeJob(config, jobID)
+    if err != nil {
+        fmt.Printf("Error describing job: %v\n", err)
+    }
+
+	default:
+		fmt.Println("Invalid command. Usage: hiveforgectl [get jobs | create job <json_file>] [-d|--debug]")
 	}
 }

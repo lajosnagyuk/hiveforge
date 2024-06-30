@@ -2,5 +2,5 @@
   "api_endpoint": "localhost",
   "port": 63994,
   "cacert_file": "",
-  "debug": true
+  "debug": false
 }

@@ -1,0 +1,6 @@
+{
+  "name": "Test Job 3",
+  "description": "This is a test job created via the CLI",
+  "status": "pending",
+  "requested_capabilities": ["python", "machine_learning", "data_analysis", "x86_64"]
+}

@@ -60,6 +60,7 @@ ENV PATH=/usr/local/elixir/bin:/usr/local/lib:$PATH
 
 # Expose the port the app runs on
 EXPOSE $PORT
-
+COPY start.sh ./
+RUN chmod +x start.sh
 # Start the application
-CMD ["bin/hiveforge_agent", "start"]
+CMD ["./start.sh"]

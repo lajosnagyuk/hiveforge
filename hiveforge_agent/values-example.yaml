@@ -2,7 +2,7 @@
   image:
     registry: "quay.io"
     repository: "lajos_nagy/hiveforge-agent"
-    tag: "20240629-1"
+    tag: "20240630-4"
     pullPolicy: "IfNotPresent"
 
   tunables:

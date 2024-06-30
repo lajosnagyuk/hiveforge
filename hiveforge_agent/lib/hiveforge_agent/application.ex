@@ -7,7 +7,8 @@ defmodule HiveforgeAgent.Application do
     Logger.info("Starting application...")
 
     children = [
-      {HiveforgeAgent.Scheduler, []}
+      {HiveforgeAgent.Scheduler, []},
+      HiveforgeAgent.Heartbeat
     ]
 
     opts = [strategy: :one_for_one, name: HiveforgeAgent.Supervisor]

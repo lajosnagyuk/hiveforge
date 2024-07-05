@@ -12,10 +12,7 @@ config :hiveforge_controller, HiveforgeController.Repo,
   ssl_opts: [
     verify: :verify_peer,
     cacertfile: System.get_env("POSTGRES_CACERTFILE"),
-    server_name_indication: to_charlist(System.get_env("DB_HOST")),
-    customize_hostname_check: [
-      match_fun: :public_key.pkix_verify_hostname_match_fun(:https)
-    ]
+    server_name_indication: to_charlist(System.get_env("DB_HOST"))
   ]
 
 config :hiveforge_controller,

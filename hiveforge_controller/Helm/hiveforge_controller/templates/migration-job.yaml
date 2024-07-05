@@ -8,11 +8,21 @@ spec:
       name: db-setup
     spec:
       restartPolicy: Never
+      volumes:
+        - name: postgres-ca-cert
+          configMap:
+            name: postgres-ca-cert
       containers:
       - name: db-setup
         image: "{{.Values.migration.image.registry }}/{{ .Values.migration.image.repository }}:{{ .Values.migration.image.tag }}"
         command: ["/bin/sh", "-c", "./migrate.sh && sleep 3600"]
+        volumeMounts:
+          - name: postgres-ca-cert
+            mountPath: /etc/ssl/postgres
+            readOnly: true
         env:
+          - name: POSTGRES_CACERTFILE
+            value: /etc/ssl/postgres/ca.crt
           - name: DB_USERNAME
             valueFrom:
               secretKeyRef:

@@ -155,22 +155,36 @@ spec:
   databases:
     hiveforge-database: hiveforgecontroller
   postgresql:
-    version: "15"
+    version: "16"
 EOF
 
     # Wait for the cluster to be ready
     kubectl wait --for=condition=Ready --timeout=300s postgresql/hiveforge-cluster -n hiveforge-database
 
-    # Create secret for hiveforge-controller
-    POSTGRES_PASSWORD=$(kubectl get secret hiveforge-cluster.hiveforgecontroller.credentials.postgresql.acid.zalan.do -n hiveforge-database -o jsonpath='{.data.password}' | base64 --decode)
+    # Create or update secret for hiveforge-controller
+    POSTGRES_PASSWORD=$(kubectl get secret hiveforgecontroller.hiveforge-cluster.credentials.postgresql.acid.zalan.do -n hiveforge-database -o jsonpath='{.data.password}' | base64 --decode)
 
     kubectl create secret generic hiveforge-database-secret \
         --namespace hiveforge-controller \
         --from-literal=postgres-password=${POSTGRES_PASSWORD} \
         --from-literal=postgres-username=hiveforgecontroller \
-        --from-literal=postgres-host=hiveforge-cluster \
+        --from-literal=postgres-host=hiveforge-cluster-pooler.hiveforge-database.svc.cluster.local \
         --from-literal=postgres-port=5432 \
-        --from-literal=postgres-database=hiveforge-database
+        --from-literal=postgres-database=hiveforge-database \
+        --dry-run=client -o yaml | kubectl apply -f -
+
+    # Get the name of a pgbouncer pod
+    PGBOUNCER_POD=$(kubectl get pods -n hiveforge-database -l application=db-connection-pooler,cluster-name=hiveforge-cluster -o jsonpath='{.items[0].metadata.name}')
+
+    # Fetch the CA certificate from the pgbouncer pod
+    CA_CERT=$(kubectl exec -n hiveforge-database $PGBOUNCER_POD -- cat /etc/ssl/certs/pgbouncer.crt 2>/dev/null)
+
+    # Create or update ConfigMap with CA certificate
+    echo "$CA_CERT" > ca.crt
+    kubectl create configmap postgres-ca-cert --from-file=ca.crt=ca.crt -n hiveforge-controller --dry-run=client -o yaml | kubectl apply -f -
+
+    # Clean up the temporary file
+    rm ca.crt
 }
 
 main() {

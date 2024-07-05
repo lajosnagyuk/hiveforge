@@ -14,8 +14,16 @@ spec:
       labels:
         app: {{ .Release.Name }}
     spec:
+      volumes:
+        - name: postgres-ca-cert
+          configMap:
+            name: postgres-ca-cert
       containers:
         - name: {{ .Chart.Name }}
+          volumeMounts:
+            - name: postgres-ca-cert
+              mountPath: /etc/ssl/postgres
+              readOnly: true
           image: "{{.Values.image.registry }}/{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
@@ -25,6 +33,8 @@ spec:
             - name: {{ .name }}
               value: {{ .value | quote }}
             {{- end }}
+            - name: POSTGRES_CACERTFILE
+              value: /etc/ssl/postgres/ca.crt
             - name: DB_USERNAME
               valueFrom:
                 secretKeyRef:

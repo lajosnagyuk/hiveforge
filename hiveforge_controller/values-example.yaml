@@ -3,7 +3,7 @@ replicaCount: "1"
 image:
   registry: "quay.io"
   repository: "lajos_nagy/hiveforge-controller"
-  tag: "erlang-27.0-20240705-1"
+  tag: "erlang-27.0-20240705-4"
   pullPolicy: "IfNotPresent"
 
 
@@ -11,7 +11,7 @@ migration:
   image:
     registry: "quay.io"
     repository: "lajos_nagy/hiveforge-database-migrations"
-    tag: "erlang-27.0-20240705-1"
+    tag: "erlang-27.0-20240705-4"
     pullPolicy: "IfNotPresent"
 
 tunables:
@@ -31,11 +31,5 @@ env:
     value: "service"
   - name: HIVEFORGE_CONTROLLER_INTERNAL_SERVICE_PORT
     value: "4000"
-  - name: DB_HOST
-    value: "{{ .Values.tunables.database.clusterName }}-pooler.{{ .Values.tunables.database.namespace }}.svc.cluster.local"
-  - name: DB_PORT
-    value: "{{ .Values.tunables.network.pgbouncerPort }}"
-  - name: DB_NAME
-    value: "{{ .Values.tunables.database.name }}"
   - name: RELEASE_CONFIG_DIR
     value: /app/config

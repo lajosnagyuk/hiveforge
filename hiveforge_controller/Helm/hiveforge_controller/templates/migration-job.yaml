@@ -13,21 +13,19 @@ spec:
         image: "{{.Values.migration.image.registry }}/{{ .Values.migration.image.repository }}:{{ .Values.migration.image.tag }}"
         command: ["/bin/sh", "-c", "./migrate.sh && sleep 3600"]
         env:
-          {{- range .Values.env }}
-          - name: {{ .name }}
-            value: {{ .value | quote }}
-          {{- end }}
-          - name: PGPOOL_USERNAME
+          - name: DB_USERNAME
             valueFrom:
               secretKeyRef:
                 name: "{{ .Values.tunables.database.secretName }}"
                 key: postgres-username
-          - name: PGPOOL_PASSWORD
+          - name: DB_PASSWORD
             valueFrom:
               secretKeyRef:
                 name: "{{ .Values.tunables.database.secretName }}"
                 key: postgres-password
-          - name: PGPOOL_PORT
-            value: "{{ .Values.tunables.network.pgpoolPort }}"
-          - name: PGPOOL_DATABASE
+          - name: DB_NAME
             value: "{{ .Values.tunables.database.name }}"
+          - name: DB_HOST
+            value: "{{ .Values.tunables.database.clusterName }}-pooler.{{ .Values.tunables.database.namespace }}.svc.cluster.local"
+          - name: DB_PORT
+            value: "{{ .Values.tunables.network.pgbouncerPort }}"

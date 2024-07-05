@@ -1,7 +1,7 @@
 #!/bin/bash
 
 HELM_VERSION="3.15.2"
-POSTGRES_CHART_VERSION="14.2.7"
+POSTGRES_OPERATOR_VERSION="1.12.2"
 
 # Is this darwin? Is this Linux?
 check_platform() {
@@ -115,81 +115,69 @@ check_hiveforge_controller_secret(){
     fi
 }
 
-install_postgres() {
+install_postgres_operator() {
     # check namespace
-    kubectl get namespace hiveforge-database
+    kubectl get namespace postgres-operator
     if [ $? -ne 0 ]; then
-        echo "namespace didn't exist, installing"
-        kubectl create namespace hiveforge-database
-        kubectl label namespace hiveforge-database app=hiveforge-database
+        echo "Namespace didn't exist, creating postgres-operator namespace"
+        kubectl create namespace postgres-operator
     fi
-    postgres_replicator_password=$(openssl rand -base64 12)
-    postgres_user=hiveforgecontroller
-    postgres_password=$(openssl rand -base64 12)
-    postgres_database=hiveforge-database
-    postgres_replica_count=3
-    pgpool_replica_count=3
-    pgpool_admin_username=pgpool
-    pgpool_admin_password=$(openssl rand -base64 12)
-    # check secret exists
-    kubectl get secret hiveforge-database-secret --namespace hiveforge-database
-    if [ $? -eq 0 ]; then
-        echo "Secret already exists. Setting variables for upgrade step..."
-        # set variables from secret
-        postgres_password=$(kubectl get secret hiveforge-database-secret --namespace hiveforge-database -o jsonpath="{.data.postgres-password}" | base64 --decode)
-        postgres_replicator_password=$(kubectl get secret hiveforge-database-secret --namespace hiveforge-database -o jsonpath="{.data.replication-password}" | base64 --decode)
-        postgres_user=$(kubectl get secret hiveforge-database-secret --namespace hiveforge-database -o jsonpath="{.data.postgres-username}" | base64 --decode)
-        pgpool_admin_username=$(kubectl get secret hiveforge-database-secret --namespace hiveforge-database -o jsonpath="{.data.pgpool-admin-username}" | base64 --decode)
-        pgpool_admin_password=$(kubectl get secret hiveforge-database-secret --namespace hiveforge-database -o jsonpath="{.data.pgpool-admin-password}" | base64 --decode)
 
-        # check if secret is replicated to hiveforge-controller namespace
-        # if not, replicate it
-        # check namespace hiveforge-controller exists
-        kubectl get namespace hiveforge-controller
-        if [ $? -ne 0 ]; then
-            echo "namespace didn't exist, installing"
-            kubectl create namespace hiveforge-controller
-            kubectl label namespace hiveforge-controller app=hiveforge-controller
-        fi
-        kubectl get secret hiveforge-database-secret --namespace hiveforge-controller
-        check_hiveforge_controller_secret
-    else
-        echo "Creating secret..."
-        kubectl create secret generic hiveforge-database-secret \
-          --namespace hiveforge-database \
-          --from-literal=postgres-password=${postgres_password} \
-          --from-literal=replication-password=${postgres_replicator_password} \
-          --from-literal=postgres-username=${postgres_user} \
-          --from-literal=pgpool-admin-username=${pgpool_admin_username} \
-          --from-literal=pgpool-admin-password=${pgpool_admin_password}
-        check_hiveforge_controller_secret
+    # add zalando postgres-operator repo
+    helm repo add postgres-operator-charts https://opensource.zalando.com/postgres-operator/charts/postgres-operator
 
-    fi
-    # add bitnami repo
-    helm repo add bitnami https://charts.bitnami.com/bitnami
-    helm upgrade --install hiveforge-database bitnami/postgresql-ha \
-    --namespace ${postgres_database} \
-    --version ${POSTGRES_CHART_VERSION} \
-    --set global.postgresql.postgresqlDatabase=hiveforge-database \
-    --set global.postgresql.username=${postgres_user} \
-    --set global.postgresql.password=${postgres_password} \
-    --set global.postgresql.repmgrPassword=${postgres_replicator_password} \
-    --set postgresql.repmgrPassword=${postgres_replicator_password} \
-    --set postgresql.replicaCount=${postgres_replica_count} \
-    --set pgpool.replicaCount=${pgpool_replica_count} \
-    --set global.pgpool.adminUsername=${pgpool_admin_username} \
-    --set pgpool.adminPassword=${pgpool_admin_password} \
-    --set global.pgpool.adminPassword=${pgpool_admin_password} \
-    --set pgpool.enabled=true \
-    --set pgpool.customUsers.usernames="${postgres_user}" \
-    --set pgpool.customUsers.passwords="${postgres_password}"
+    # install postgres-operator
+    helm upgrade --install postgres-operator postgres-operator-charts/postgres-operator \
+        --namespace postgres-operator \
+        --version ${POSTGRES_OPERATOR_VERSION} \
+        --set watchedNamespace=hiveforge-database
+
+    # Wait for the operator to be ready
+    kubectl rollout status deployment postgres-operator -n postgres-operator
+
+    # Create PostgreSQL cluster
+    cat <<EOF | kubectl apply -f -
+apiVersion: "acid.zalan.do/v1"
+kind: postgresql
+metadata:
+  name: hiveforge-cluster
+  namespace: hiveforge-database
+spec:
+  enableConnectionPooler: true
+  connectionPooler:
+    numberOfInstances: 3
+  teamId: "hiveforge"
+  volume:
+    size: 10Gi
+  numberOfInstances: 3
+  users:
+    hiveforgecontroller: []
+  databases:
+    hiveforge-database: hiveforgecontroller
+  postgresql:
+    version: "15"
+EOF
+
+    # Wait for the cluster to be ready
+    kubectl wait --for=condition=Ready --timeout=300s postgresql/hiveforge-cluster -n hiveforge-database
+
+    # Create secret for hiveforge-controller
+    POSTGRES_PASSWORD=$(kubectl get secret hiveforge-cluster.hiveforgecontroller.credentials.postgresql.acid.zalan.do -n hiveforge-database -o jsonpath='{.data.password}' | base64 --decode)
+
+    kubectl create secret generic hiveforge-database-secret \
+        --namespace hiveforge-controller \
+        --from-literal=postgres-password=${POSTGRES_PASSWORD} \
+        --from-literal=postgres-username=hiveforgecontroller \
+        --from-literal=postgres-host=hiveforge-cluster \
+        --from-literal=postgres-port=5432 \
+        --from-literal=postgres-database=hiveforge-database
 }
 
 main() {
     check_platform
     install_helm
     install_kubectl
-    install_postgres
+    install_postgres_operator
 }
 
 main

@@ -16,27 +16,18 @@ tunables:
   network:
     targetPort: "4000"
     servicePort: "80"
-    postgresPort: "5432"
-    pgpoolPort: "5432"
+    pgPort: "5432"
     type: "ClusterIP"
   database:
     secretName: "hiveforge-database-secret"
-    name: "hiveforge-controller"
+    name: "hiveforge-database"
+    clusterName: "hiveforge-cluster"
+    namespace: "hiveforge-database"
 
 env:
   - name: TLS_TERMINATION_METHOD
     value: "service"
-    # possible values: service, internal, where service means the api exposes http and something else wraps it in tls,
-    # internal means the api exposes https directly and you'll need to set
-    # HIVEFORGE_CONTROLLER_CERTFILE=/hiveforge_controller/misc/certificates/server.crt
-    # HIVEFORGE_CONTROLLER_KEYFILE=/hiveforge_controller/misc/certificates/server.key
   - name: HIVEFORGE_CONTROLLER_INTERNAL_SERVICE_PORT
     value: "4000"
-  - name: POSTGRESDB_HOST
-    value: "hiveforge-database-postgresql-ha-pgpool.hiveforge-database.svc.cluster.local"
-  - name: PGPOOL_HOST
-    value: "hiveforge-database-postgresql-ha-pgpool.hiveforge-database.svc.cluster.local"
-  - name: POSTGRESDB_PORT
-    value: "5432"
   - name: RELEASE_CONFIG_DIR
     value: /app/config

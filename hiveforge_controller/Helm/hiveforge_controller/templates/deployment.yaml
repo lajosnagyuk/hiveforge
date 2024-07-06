@@ -25,29 +25,19 @@ spec:
             - name: {{ .name }}
               value: {{ .value | quote }}
             {{- end }}
-            - name: POSTGRESDB_USERNAME
+            - name: DB_USERNAME
               valueFrom:
                 secretKeyRef:
                   name: "{{ .Values.tunables.database.secretName }}"
                   key: postgres-username
-            - name: POSTGRESDB_PASSWORD
+            - name: DB_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: "{{ .Values.tunables.database.secretName }}"
                   key: postgres-password
-            - name: PGPOOL_USERNAME
-              valueFrom:
-                secretKeyRef:
-                  name: "{{ .Values.tunables.database.secretName }}"
-                  key: postgres-username
-            - name: PGPOOL_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: "{{ .Values.tunables.database.secretName }}"
-                  key: postgres-password
-            - name: PGPOOL_PORT
-              value: "{{ .Values.tunables.network.pgpoolPort }}"
-            - name: POSTGRESDB_PORT
-              value: "{{ .Values.tunables.network.postgresPort }}"
-            - name: PGPOOL_DATABASE
+            - name: DB_NAME
               value: "{{ .Values.tunables.database.name }}"
+            - name: DB_HOST
+              value: "{{ .Values.tunables.database.clusterName }}.{{ .Values.tunables.database.namespace }}.svc.cluster.local"
+            - name: DB_PORT
+              value: "{{ .Values.tunables.network.pgPort }}"

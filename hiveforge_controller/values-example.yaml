@@ -3,7 +3,7 @@ replicaCount: "1"
 image:
   registry: "quay.io"
   repository: "lajos_nagy/hiveforge-controller"
-  tag: "erlang-27.0-20240705-5"
+  tag: "erlang-27.0-20240706-3"
   pullPolicy: "IfNotPresent"
 
 
@@ -11,14 +11,14 @@ migration:
   image:
     registry: "quay.io"
     repository: "lajos_nagy/hiveforge-database-migrations"
-    tag: "erlang-27.0-20240705-5"
+    tag: "erlang-27.0-20240706-3"
     pullPolicy: "IfNotPresent"
 
 tunables:
   network:
     targetPort: "4000"
     servicePort: "80"
-    pgbouncerPort: "5432"
+    pgPort: "5432"
     type: "ClusterIP"
   database:
     secretName: "hiveforge-database-secret"

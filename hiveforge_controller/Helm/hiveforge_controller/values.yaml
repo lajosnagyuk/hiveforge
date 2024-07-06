@@ -16,7 +16,7 @@ tunables:
   network:
     targetPort: "4000"
     servicePort: "80"
-    pgbouncerPort: "5432"
+    pgPort: "5432"
     type: "ClusterIP"
   database:
     secretName: "hiveforge-database-secret"

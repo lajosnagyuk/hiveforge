@@ -10,9 +10,7 @@ config :hiveforge_controller, HiveforgeController.Repo,
   show_sensitive_data_on_connection_error: true,
   ssl: true,
   ssl_opts: [
-    verify: :verify_peer,
-    cacertfile: System.get_env("POSTGRES_CACERTFILE"),
-    server_name_indication: to_charlist(System.get_env("DB_HOST"))
+    verify: :verify_none
   ]
 
 config :hiveforge_controller,

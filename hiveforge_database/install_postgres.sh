@@ -151,15 +151,54 @@ spec:
     size: 10Gi
   numberOfInstances: 3
   users:
-    hiveforgecontroller: []
+    hiveforgecontroller:
+      - superuser
+      - createdb
   databases:
-    hiveforge-database: hiveforgecontroller
+    hiveforge-controller: hiveforgecontroller
   postgresql:
     version: "16"
 EOF
 
     # Wait for the cluster to be ready
-    kubectl wait --for=condition=Ready --timeout=300s postgresql/hiveforge-cluster -n hiveforge-database
+    # get numberOfInstances from the spec
+    num_instances=$(kubectl get postgresql hiveforge-cluster -n hiveforge-database -o jsonpath='{.spec.numberOfInstances}')
+
+    echo "Number of instances: $num_instances"
+
+    if [ "$num_instances" -gt 0 ]; then
+        for i in 0 1; do
+            if [ "$i" -lt "$num_instances" ]; then
+                echo "Waiting for pod hiveforge-cluster-$i to be ready..."
+                kubectl wait --for=condition=Ready --timeout=180s pod/hiveforge-cluster-$i -n hiveforge-database
+                if [ $? -ne 0 ]; then
+                    echo "Timeout waiting for pod hiveforge-cluster-$i"
+                    exit 1
+                fi
+            fi
+        done
+        echo "At least the first two pods (or all available pods if less than two) are ready."
+    else
+        echo "No instances specified in the PostgreSQL spec."
+    fi
+
+    num_pooler_instances=$(kubectl get postgresql hiveforge-cluster -n hiveforge-database -o jsonpath='{.spec.connectionPooler.numberOfInstances}')
+
+    if [ "$num_pooler_instances" -gt 0 ]; then
+        for i in 0 1; do
+            if [ "$i" -lt "$num_pooler_instances" ]; then
+                echo "Waiting for pod hiveforge-cluster-pooler-$i to be ready..."
+                kubectl wait --for=condition=Ready --timeout=180s pod/hiveforge-cluster-pooler-$i -n hiveforge-database
+                if [ $? -ne 0 ]; then
+                    echo "Timeout waiting for pod hiveforge-cluster-pooler-$i"
+                    exit 1
+                fi
+            fi
+        done
+        echo "At least the first two pooler pods (or all available pooler pods if less than two) are ready."
+    else
+        echo "No pooler instances specified in the PostgreSQL spec."
+    fi
 
     # Create or update secret for hiveforge-controller
     POSTGRES_PASSWORD=$(kubectl get secret hiveforgecontroller.hiveforge-cluster.credentials.postgresql.acid.zalan.do -n hiveforge-database -o jsonpath='{.data.password}' | base64 --decode)
@@ -173,18 +212,7 @@ EOF
         --from-literal=postgres-database=hiveforge-database \
         --dry-run=client -o yaml | kubectl apply -f -
 
-    # Get the name of a pgbouncer pod
-    PGBOUNCER_POD=$(kubectl get pods -n hiveforge-database -l application=db-connection-pooler,cluster-name=hiveforge-cluster -o jsonpath='{.items[0].metadata.name}')
-
-    # Fetch the CA certificate from the pgbouncer pod
-    CA_CERT=$(kubectl exec -n hiveforge-database $PGBOUNCER_POD -- cat /etc/ssl/certs/pgbouncer.crt 2>/dev/null)
-
-    # Create or update ConfigMap with CA certificate
-    echo "$CA_CERT" > ca.crt
-    kubectl create configmap postgres-ca-cert --from-file=ca.crt=ca.crt -n hiveforge-controller --dry-run=client -o yaml | kubectl apply -f -
-
     # Clean up the temporary file
-    rm ca.crt
 }
 
 main() {

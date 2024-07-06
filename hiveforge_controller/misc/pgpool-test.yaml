@@ -9,19 +9,19 @@ spec:
     image: postgres:16
     command: ["sleep", "3600"]
     env:
-    - name: PGPOOL_USERNAME
-      valueFrom:
-        secretKeyRef:
-          name: hiveforge-database-secret
-          key: pgpool-admin-username
-    - name: PGPOOL_PASSWORD
-      valueFrom:
-        secretKeyRef:
-          name: hiveforge-database-secret
-          key: pgpool-admin-password
-    - name: PGPOOL_DATABASE
-      value: "hiveforge-controller"
-    - name: PGPOOL_HOST
-      value: "hiveforge-database-postgresql-ha-pgpool.hiveforge-database.svc.cluster.local"
-    - name: PGPOOL_PORT
-      value: "5432"
+      - name: DB_USERNAME
+        valueFrom:
+          secretKeyRef:
+            name: "hiveforge-database-secret"
+            key: postgres-username
+      - name: DB_PASSWORD
+        valueFrom:
+          secretKeyRef:
+            name: "hiveforge-database-secret"
+            key: postgres-password
+      - name: DB_NAME
+        value: "hiveforge-controller"
+      - name: DB_HOST
+        value: "hiveforge-cluster.hiveforge-database.svc.cluster.local"
+      - name: DB_PORT
+        value: "5432"

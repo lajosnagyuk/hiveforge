@@ -11,7 +11,7 @@ defmodule HiveforgeController.JobController do
   end
 
   def create_job(conn, params) do
-    with {:ok, _} <- ApiAuth.validate_request(conn, params),
+    with {:ok, _auth_key} <- ApiAuth.validate_request(conn, params, :create_job),
          {:ok, decoded} <- decode_body(params),
          {:ok, job} <- JobService.create_job(decoded) do
       conn
@@ -20,21 +20,18 @@ defmodule HiveforgeController.JobController do
     else
       {:error, :invalid_encoding} ->
         error_response(conn, :bad_request, "Invalid base64 encoding")
-
       {:error, :invalid_json} ->
         error_response(conn, :bad_request, "Invalid JSON")
-
       {:error, changeset} ->
         errors = Ecto.Changeset.traverse_errors(changeset, fn {msg, _opts} -> msg end)
         error_response(conn, :unprocessable_entity, %{errors: errors})
-
       {:error, reason} ->
         error_response(conn, :unauthorized, reason)
     end
   end
 
   def list_jobs(conn, params) do
-    with {:ok, _} <- ApiAuth.validate_request(conn, params) do
+    with {:ok, _auth_key} <- ApiAuth.validate_request(conn, params, :list_jobs) do
       jobs = JobService.list_jobs()
       json_response(conn, jobs)
     else
@@ -44,7 +41,7 @@ defmodule HiveforgeController.JobController do
   end
 
   def get_job(conn, %{"id" => id} = params) do
-    with {:ok, _} <- ApiAuth.validate_request(conn, params),
+    with {:ok, _auth_key} <- ApiAuth.validate_request(conn, params, :get_job),
          {:ok, job} <- JobService.get_job(String.to_integer(id)) do
       conn
       |> put_status(:ok)
@@ -54,7 +51,6 @@ defmodule HiveforgeController.JobController do
         conn
         |> put_status(:not_found)
         |> json_response(%{error: "Job not found"})
-
       {:error, reason} ->
         error_response(conn, :unauthorized, reason)
     end
@@ -69,7 +65,6 @@ defmodule HiveforgeController.JobController do
       {:error, %Jason.DecodeError{}} -> {:error, :invalid_json}
     end
   end
-
   defp decode_body(_), do: {:error, :invalid_encoding}
 
   defp json_response(conn, data) do

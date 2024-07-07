@@ -2,5 +2,7 @@
   "api_endpoint": "localhost",
   "port": 63994,
   "cacert_file": "",
-  "debug": false
+  "debug": false,
+  "master_key": "boo",
+  "api_key": ""
 }

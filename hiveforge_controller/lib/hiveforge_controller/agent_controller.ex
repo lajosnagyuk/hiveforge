@@ -1,6 +1,6 @@
-defmodule HiveforgeController.ApiKeyController do
+defmodule HiveforgeController.AgentController do
   use Plug.Builder
-  alias HiveforgeController.{ApiAuth, ApiKey, Repo}
+  alias HiveforgeController.{Agent, Repo, ApiAuth}
   import Plug.Conn
   require Logger
 
@@ -11,79 +11,17 @@ defmodule HiveforgeController.ApiKeyController do
     apply(__MODULE__, action, [conn, conn.params])
   end
 
-  def generate_key(conn, params) do
-    case get_req_header(conn, "x-master-key") do
-      [provided_key | _] ->
-        if ApiAuth.validate_master_key(provided_key) do
-          generate_initial_operator_key(conn, params)
-        else
-          conn
-          |> put_status(:unauthorized)
-          |> json_response(%{error: "Invalid master key"})
-        end
-
-      [] ->
-        generate_key_with_api_key(conn, params)
-    end
-  end
-
-  defp generate_initial_operator_key(conn, params) do
-    new_key = ApiAuth.generate_api_key("operator_key")
-
-    changeset =
-      ApiKey.changeset(%ApiKey{}, %{
-        key: new_key,
-        type: "operator_key",
-        name: params["name"] || "Initial Operator Key",
-        description: params["description"] || "First operator key generated with master key",
-        created_by: "master_key"
-      })
-
-    case Repo.insert(changeset) do
-      {:ok, api_key} ->
-        conn
-        |> put_status(:created)
-        |> json_response(%{
-          key: api_key.key,
-          message: "Initial operator key generated successfully"
-        })
-
-      {:error, changeset} ->
-        errors = Ecto.Changeset.traverse_errors(changeset, fn {msg, _opts} -> msg end)
-
-        conn
-        |> put_status(:unprocessable_entity)
-        |> json_response(%{errors: errors})
-    end
-  end
-
-  defp generate_key_with_api_key(conn, params) do
+  def register(conn, params) do
     with {:ok, auth_key} <- ApiAuth.validate_request(conn, params),
-         {:ok, key_type} <- validate_key_type(params["type"]),
-         {:ok, _} <- authorize_key_generation(auth_key, key_type) do
-      new_key = ApiAuth.generate_api_key(key_type)
-
-      changeset =
-        ApiKey.changeset(%ApiKey{}, %{
-          key: new_key,
-          type: key_type,
-          name: params["name"],
-          description: params["description"],
-          created_by: auth_key.key
-        })
-
+         :ok <- authorize_action(auth_key, :register) do
+      changeset = Agent.changeset(%Agent{}, params)
       case Repo.insert(changeset) do
-        {:ok, api_key} ->
+        {:ok, agent} ->
           conn
           |> put_status(:created)
-          |> json_response(%{
-            key: api_key.key,
-            message: "#{String.capitalize(key_type)} generated successfully"
-          })
-
+          |> json_response(agent)
         {:error, changeset} ->
           errors = Ecto.Changeset.traverse_errors(changeset, fn {msg, _opts} -> msg end)
-
           conn
           |> put_status(:unprocessable_entity)
           |> json_response(%{errors: errors})
@@ -96,17 +34,72 @@ defmodule HiveforgeController.ApiKeyController do
     end
   end
 
-  defp validate_key_type(type) when type in ["operator_key", "agent_key", "reader_key"],
-    do: {:ok, type}
+  def heartbeat(conn, %{"agent_id" => agent_id} = params) do
+    with {:ok, auth_key} <- ApiAuth.validate_request(conn, params),
+         :ok <- authorize_action(auth_key, :heartbeat) do
+      case Repo.get_by(Agent, agent_id: agent_id) do
+        nil ->
+          conn
+          |> put_status(:not_found)
+          |> json_response(%{error: "Agent not found"})
+        agent ->
+          changeset = Agent.changeset(agent, %{
+            last_heartbeat: DateTime.utc_now(),
+            status: "active"
+          })
+          case Repo.update(changeset) do
+            {:ok, updated_agent} ->
+              json_response(conn, %{message: "Heartbeat received", agent: updated_agent})
+            {:error, _changeset} ->
+              conn
+              |> put_status(:internal_server_error)
+              |> json_response(%{error: "Failed to update agent heartbeat"})
+          end
+      end
+    else
+      {:error, reason} ->
+        conn
+        |> put_status(:unauthorized)
+        |> json_response(%{error: reason})
+    end
+  end
 
-  defp validate_key_type(_), do: {:error, "Invalid key type"}
+  def list_agents(conn, params) do
+    with {:ok, auth_key} <- ApiAuth.validate_request(conn, params),
+         :ok <- authorize_action(auth_key, :list_agents) do
+      agents = Repo.all(Agent)
+      json_response(conn, agents)
+    else
+      {:error, reason} ->
+        conn
+        |> put_status(:unauthorized)
+        |> json_response(%{error: reason})
+    end
+  end
 
-  defp authorize_key_generation(%ApiKey{type: "operator_key"}, _), do: {:ok, :authorized}
+  def get_agent(conn, %{"id" => id} = params) do
+    with {:ok, auth_key} <- ApiAuth.validate_request(conn, params),
+         :ok <- authorize_action(auth_key, :get_agent) do
+      case Repo.get(Agent, id) do
+        nil ->
+          conn
+          |> put_status(:not_found)
+          |> json_response(%{error: "Agent not found"})
+        agent ->
+          json_response(conn, agent)
+      end
+    else
+      {:error, reason} ->
+        conn
+        |> put_status(:unauthorized)
+        |> json_response(%{error: reason})
+    end
+  end
 
-  defp authorize_key_generation(_, "operator_key"),
-    do: {:error, "Unauthorized to generate Operator keys"}
-
-  defp authorize_key_generation(_, _), do: {:error, "Unauthorized to generate keys"}
+  defp authorize_action(%{type: "operator_key"}, _action), do: :ok
+  defp authorize_action(%{type: "agent_key"}, action) when action in [:register, :heartbeat], do: :ok
+  defp authorize_action(%{type: "reader_key"}, action) when action in [:list_agents, :get_agent], do: :ok
+  defp authorize_action(_, _), do: {:error, "Unauthorized action for this key type"}
 
   defp json_response(conn, data) do
     conn

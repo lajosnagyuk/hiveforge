@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"crypto/hmac"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -12,6 +14,7 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"time"
 )
 
 // Config represents the application configuration
@@ -20,6 +23,15 @@ type Config struct {
 	Port        int    `json:"port"`
 	CacertFile  string `json:"cacert_file"`
 	Debug       bool   `json:"debug"`
+	ApiKey      string `json:"api_key"`
+	MasterKey   string `json:"master_key"`
+}
+
+type ApiKey struct {
+	Key 	string `json:"key"`
+	Type    string `json:"type"`
+	Name    string `json:"name"`
+	Description string `json:"description"`
 }
 
 // Job represents a job retrieved from the API
@@ -76,6 +88,151 @@ func loadConfig() (Config, error) {
 	}
 
 	return Config{}, errors.New("config file not found in current directory or ~/.hiveforge/")
+}
+
+func generateSignature(apiKey, nonce string, body []byte) string {
+	transactionKey := hmac.New(sha256.New, []byte(apiKey))
+	transactionKey.Write([]byte("TRANSACTION" + nonce))
+
+	signature := hmac.New(sha256.New, transactionKey.Sum(nil))
+	signature.Write(body)
+
+	return base64.StdEncoding.EncodeToString(signature.Sum(nil))
+}
+
+func makeAuthenticatedRequest(config Config, method, url string, body []byte) (*http.Response, error) {
+	req, err := http.NewRequest(method, url, bytes.NewBuffer(body))
+	if err != nil {
+		return nil, err
+	}
+
+	nonce := fmt.Sprintf("%d", time.Now().UnixNano())
+	signature := generateSignature(config.ApiKey, nonce, body)
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-api-key", config.ApiKey)
+	req.Header.Set("x-nonce", nonce)
+	req.Header.Set("x-signature", signature)
+
+	client := &http.Client{}
+	return client.Do(req)
+}
+
+func generateApiKey(config Config, keyType, name, description string) (*ApiKey, error) {
+    if keyType == "operator_key" && config.MasterKey == "" {
+        return nil, errors.New("master key is required to generate an operator key")
+    }
+
+    url := fmt.Sprintf("http://%s:%d/api/v1/api_keys", config.ApiEndpoint, config.Port)
+
+    requestBody, err := json.Marshal(map[string]string{
+        "type": keyType,
+        "name": name,
+        "description": description,
+    })
+    if err != nil {
+        return nil, err
+    }
+
+    var resp *http.Response
+    var reqErr error
+
+    if keyType == "operator_key" && config.MasterKey != "" {
+        req, err := http.NewRequest("POST", url, bytes.NewBuffer(requestBody))
+        if err != nil {
+            return nil, err
+        }
+        req.Header.Set("Content-Type", "application/json")
+        req.Header.Set("x-master-key", config.MasterKey)
+
+        client := &http.Client{}
+        resp, reqErr = client.Do(req)
+    } else if config.ApiKey != "" {
+        resp, reqErr = makeAuthenticatedRequest(config, "POST", url, requestBody)
+    } else {
+        return nil, errors.New("neither master key (for operator key) nor API key is set")
+    }
+
+    if reqErr != nil {
+        return nil, reqErr
+    }
+    if resp == nil {
+        return nil, errors.New("no response received from server")
+    }
+    defer resp.Body.Close()
+
+    body, err := io.ReadAll(resp.Body)
+    if err != nil {
+        return nil, err
+    }
+
+    if resp.StatusCode != http.StatusCreated {
+        return nil, fmt.Errorf("failed to generate API key: %s", string(body))
+    }
+
+    var apiKey ApiKey
+    err = json.Unmarshal(body, &apiKey)
+    if err != nil {
+        return nil, err
+    }
+
+    return &apiKey, nil
+}
+
+func listApiKeys(config Config) ([]ApiKey, error) {
+	url := fmt.Sprintf("http://%s:%d/api/v1/api_keys", config.ApiEndpoint, config.Port)
+
+	resp, err := makeAuthenticatedRequest(config, "GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("failed to list API keys: %s", string(body))
+	}
+
+	var apiKeys []ApiKey
+	err = json.Unmarshal(body, &apiKeys)
+	if err != nil {
+		return nil, err
+	}
+
+	return apiKeys, nil
+}
+
+func displayApiKeys(apiKeys []ApiKey) {
+	headers := []string{"Key", "Type", "Name", "Description"}
+	maxWidths := make([]int, len(headers))
+	copy(maxWidths, []int{36, 12, 20, 30}) // Minimum widths for each header
+
+	for _, key := range apiKeys {
+		maxWidths[0] = max(maxWidths[0], len(key.Key))
+		maxWidths[1] = max(maxWidths[1], len(key.Type))
+		maxWidths[2] = max(maxWidths[2], len(key.Name))
+		maxWidths[3] = max(maxWidths[3], len(key.Description))
+	}
+
+	printSeparator(maxWidths)
+	printRow(headers, maxWidths)
+	printSeparator(maxWidths)
+
+	for _, key := range apiKeys {
+		row := []string{
+			key.Key,
+			key.Type,
+			key.Name,
+			key.Description,
+		}
+		printRow(row, maxWidths)
+	}
+
+	printSeparator(maxWidths)
 }
 
 // getJobs retrieves jobs from the API
@@ -341,97 +498,180 @@ func displayAgents(agents []Agent) {
 }
 
 func main() {
-	debug := flag.Bool("debug", false, "Enable debug mode")
-	flag.Parse()
+    debug := flag.Bool("debug", false, "Enable debug mode")
+    flag.Parse()
 
-	args := flag.Args()
-	if len(args) < 2 {
-		fmt.Println("Usage: hiveforgectl [get jobs | create job <json_file>] [-d|--debug]")
-		return
-	}
-
-	config, err := loadConfig()
-	if err != nil {
-		fmt.Println("Error loading config:", err)
-		return
-	}
-	config.Debug = *debug
-
-	if config.Debug {
-		fmt.Println("Debug mode is enabled")
-	}
-
-	switch {
-	case args[0] == "get" && args[1] == "jobs":
-    fmt.Println("Fetching jobs...")
-    jobs, err := getJobs(config)
-    if err != nil {
-        fmt.Printf("Error fetching jobs: %v\n", err)
+    args := flag.Args()
+    if len(args) < 1 {
+        printUsage()
         return
     }
 
-    if len(jobs) == 0 {
-        fmt.Println("No jobs found.")
-    } else {
-        fmt.Printf("Retrieved %d jobs. Displaying...\n", len(jobs))
-        displayJobs(jobs)
+    config, err := loadConfig()
+    if err != nil {
+        fmt.Println("Error loading config:", err)
+        return
     }
-	case args[0] == "create" && args[1] == "job":
-		if len(args) < 3 {
-			fmt.Println("Usage: hiveforgectl create job <json_file> [-d|--debug]")
+    config.Debug = *debug
+
+    if config.Debug {
+        fmt.Println("Debug mode is enabled")
+    }
+
+    if config.MasterKey == "" && config.ApiKey == "" {
+        fmt.Println("Error: Neither master key nor API key is set in the configuration. At least one is required.")
+        return
+    }
+
+	switch args[0] {
+	case "get":
+		handleGet(args[1:], config)
+	case "create":
+		handleCreate(args[1:], config)
+	case "describe":
+		handleDescribe(args[1:], config)
+	case "generate-key":
+		handleGenerateKey(args[1:], config)
+	case "list-keys":
+		handleListKeys(config)
+	default:
+		fmt.Println("Invalid command.")
+		printUsage()
+	}
+}
+
+func printUsage() {
+	fmt.Println("Usage: hiveforgectl [command] [subcommand] [args...] [-d|--debug]")
+	fmt.Println("Commands:")
+	fmt.Println("  get [jobs|agents]")
+	fmt.Println("  create job <json_file>")
+	fmt.Println("  describe [job|agent] <id>")
+	fmt.Println("  generate-key <type> <name> <description>")
+	fmt.Println("  list-keys")
+}
+
+func handleGet(args []string, config Config) {
+	if len(args) < 1 {
+		fmt.Println("Usage: hiveforgectl get [jobs|agents]")
+		return
+	}
+
+	switch args[0] {
+	case "jobs":
+		fmt.Println("Fetching jobs...")
+		jobs, err := getJobs(config)
+		if err != nil {
+			fmt.Printf("Error fetching jobs: %v\n", err)
 			return
 		}
-		jsonFilePath := args[2]
+		if len(jobs) == 0 {
+			fmt.Println("No jobs found.")
+		} else {
+			fmt.Printf("Retrieved %d jobs. Displaying...\n", len(jobs))
+			displayJobs(jobs)
+		}
+	case "agents":
+		fmt.Println("Fetching agents...")
+		agents, err := getAgents(config)
+		if err != nil {
+			fmt.Printf("Error fetching agents: %v\n", err)
+			return
+		}
+		if len(agents) == 0 {
+			fmt.Println("No agents found.")
+		} else {
+			fmt.Printf("Retrieved %d agents. Displaying...\n", len(agents))
+			displayAgents(agents)
+		}
+	default:
+		fmt.Println("Invalid subcommand. Usage: hiveforgectl get [jobs|agents]")
+	}
+}
+
+func handleCreate(args []string, config Config) {
+	if len(args) < 2 {
+		fmt.Println("Usage: hiveforgectl create job <json_file>")
+		return
+	}
+
+	if args[0] == "job" {
+		jsonFilePath := args[1]
 		err := createJob(config, jsonFilePath)
 		if err != nil {
 			fmt.Println("Error creating job:", err)
 		}
+	} else {
+		fmt.Println("Invalid subcommand. Usage: hiveforgectl create job <json_file>")
+	}
+}
 
-	case args[0] == "describe" && args[1] == "job":
+func handleDescribe(args []string, config Config) {
+	if len(args) < 2 {
+		fmt.Println("Usage: hiveforgectl describe [job|agent] <id>")
+		return
+	}
+
+	switch args[0] {
+	case "job":
+		jobID := args[1]
+		err := describeJob(config, jobID)
+		if err != nil {
+			fmt.Printf("Error describing job: %v\n", err)
+		}
+	case "agent":
+		agentID := args[1]
+		agent, err := getAgent(config, agentID)
+		if err != nil {
+			fmt.Printf("Error describing agent: %v\n", err)
+			return
+		}
+		agentJSON, err := json.MarshalIndent(agent, "", "  ")
+		if err != nil {
+			fmt.Printf("Error formatting agent data: %v\n", err)
+			return
+		}
+		fmt.Println(string(agentJSON))
+	default:
+		fmt.Println("Invalid subcommand. Usage: hiveforgectl describe [job|agent] <id>")
+	}
+}
+
+func handleGenerateKey(args []string, config Config) {
     if len(args) < 3 {
-        fmt.Println("Usage: hiveforgectl describe job <id> [-d|--debug]")
+        fmt.Println("Usage: hiveforgectl generate-key <type> <name> <description>")
+        return
+    }
+    validKeyTypes := map[string]bool{
+        "operator_key": true,
+        "agent_key":    true,
+        "reader_key":   true,
+    }
+    if !validKeyTypes[args[0]] {
+        fmt.Println("Invalid key type. Valid key types: operator_key, agent_key, reader_key")
         return
     }
 
-    jobID := args[2]
-    err := describeJob(config, jobID)
+    keyType, name, description := args[0], args[1], args[2]
+    apiKey, err := generateApiKey(config, keyType, name, description)
     if err != nil {
-        fmt.Printf("Error describing job: %v\n", err)
+        switch err.Error() {
+        case "master key is required to generate an operator key":
+            fmt.Println("Error: Master key is not set. It is required to generate an operator key.")
+        case "neither master key (for operator key) nor API key is set":
+            fmt.Println("Error: Neither master key (for operator key) nor API key is set. At least one is required.")
+        default:
+            fmt.Printf("Error generating API key: %v\n", err)
+        }
+        return
     }
+    fmt.Printf("Successfully generated %s API key: %s\n", keyType, apiKey.Key)
+}
 
-    case args[0] == "get" && args[1] == "agents":
-        fmt.Println("Fetching agents...")
-        agents, err := getAgents(config)
-        if err != nil {
-            fmt.Printf("Error fetching agents: %v\n", err)
-            return
-        }
-        if len(agents) == 0 {
-            fmt.Println("No agents found.")
-        } else {
-            fmt.Printf("Retrieved %d agents. Displaying...\n", len(agents))
-            displayAgents(agents)
-        }
-
-    case args[0] == "describe" && args[1] == "agent":
-        if len(args) < 3 {
-            fmt.Println("Usage: hiveforgectl describe agent <id> [-d|--debug]")
-            return
-        }
-        agentID := args[2]
-        agent, err := getAgent(config, agentID)
-        if err != nil {
-            fmt.Printf("Error describing agent: %v\n", err)
-            return
-        }
-        agentJSON, err := json.MarshalIndent(agent, "", "  ")
-        if err != nil {
-            fmt.Printf("Error formatting agent data: %v\n", err)
-            return
-        }
-        fmt.Println(string(agentJSON))
-
-    default:
-        fmt.Println("Invalid command. Usage: hiveforgectl [get jobs | create job <json_file> | describe job <id> | get agents | describe agent <id>] [-d|--debug]")
-    }
+func handleListKeys(config Config) {
+	apiKeys, err := listApiKeys(config)
+	if err != nil {
+		fmt.Printf("Error listing API keys: %v\n", err)
+		return
+	}
+	displayApiKeys(apiKeys)
 }

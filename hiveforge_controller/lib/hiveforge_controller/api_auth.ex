@@ -7,9 +7,10 @@ defmodule HiveforgeController.ApiAuth do
     |> Base.url_encode64(padding: false)
   end
 
-  def validate_request(conn, params) do
+  def validate_request(conn, params, required_action) do
     with {:ok, auth_key} <- get_auth_key(conn),
-         :ok <- validate_signature(auth_key, conn, params) do
+         :ok <- validate_signature(auth_key, conn, params),
+         :ok <- authorize_action(auth_key, required_action) do
       {:ok, auth_key}
     end
   end
@@ -21,7 +22,6 @@ defmodule HiveforgeController.ApiAuth do
           nil -> {:error, "Invalid API key"}
           api_key -> {:ok, api_key}
         end
-
       [] ->
         {:error, "Missing API key"}
     end
@@ -30,14 +30,11 @@ defmodule HiveforgeController.ApiAuth do
   def validate_signature(auth_key, conn, params) do
     nonce = Plug.Conn.get_req_header(conn, "x-nonce") |> List.first()
     signature = Plug.Conn.get_req_header(conn, "x-signature") |> List.first()
-
     case {nonce, signature} do
       {nil, _} ->
         {:error, "Missing nonce"}
-
       {_, nil} ->
         {:error, "Missing signature"}
-
       {nonce, signature} ->
         expected_signature = generate_signature(auth_key.key, nonce, params)
         if expected_signature == signature, do: :ok, else: {:error, "Invalid signature"}
@@ -46,7 +43,6 @@ defmodule HiveforgeController.ApiAuth do
 
   defp generate_signature(key, nonce, params) do
     transaction_key = :crypto.mac(:hmac, :sha256, key, "TRANSACTION" <> nonce)
-
     :crypto.mac(:hmac, :sha256, transaction_key, Jason.encode!(params))
     |> Base.encode64()
   end
@@ -58,15 +54,19 @@ defmodule HiveforgeController.ApiAuth do
 
   defp get_agent_key(agent_id) do
     Logger.debug("Getting agent key for agent_id: #{inspect(agent_id)}")
-
     case Repo.get_by(Agent, agent_id: agent_id) do
       nil ->
         Logger.warn("Agent not found for agent_id: #{inspect(agent_id)}")
         nil
-
       agent ->
         Logger.debug("Agent found: #{inspect(agent)}")
         agent.agent_key
     end
   end
+
+  defp authorize_action(%{type: "operator_key"}, _action), do: :ok
+  defp authorize_action(%{type: "agent_key"}, action) when action in [:register, :heartbeat, :list_jobs, :get_job], do: :ok
+  defp authorize_action(%{type: "reader_key"}, action) when action in [:list_agents, :get_agent, :list_jobs, :get_job], do: :ok
+  defp authorize_action(_, _), do: {:error, "Unauthorized action for this key type"}
+
 end

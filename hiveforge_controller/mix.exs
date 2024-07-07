@@ -32,6 +32,7 @@ defmodule HiveforgeController.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
+      {:httpoison, "~> 2.2"},
       {:plug_cowboy, "~> 2.7"},
       {:jason, "~> 1.4"},
       {:ecto, "~> 3.11"},

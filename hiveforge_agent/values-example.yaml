@@ -1,24 +1,26 @@
-  replicaCount: "3"
-  image:
-    registry: "quay.io"
-    repository: "lajos_nagy/hiveforge-agent"
-    tag: "20240630-4"
-    pullPolicy: "IfNotPresent"
+hiveforge:
+  sharedKey: ""
+replicaCount: "3"
+image:
+  registry: "quay.io"
+  repository: "lajos_nagy/hiveforge-agent"
+  tag: "20240706-8"
+  pullPolicy: "IfNotPresent"
 
-  tunables:
-    network:
-    certificates:
-      cacertfileMountEnabled: "false"
-      cacertfile: # base64 encoded ca-cert.pem file
+tunables:
+  network:
+  certificates:
+    cacertfileMountEnabled: "false"
+    cacertfile: # base64 encoded ca-cert.pem file
 
-  env:
-    - name: MIX_ENV
-      value: "prod"
-    - name: HIVEFORGE_CA_CERT_PATH
-      value: ""
-    # In-container path to the CA certificate file, if empty, http calls will be made
-    # Otherwise the default is /hiveforge_agent/misc/certificates/ca-cert.pem
-    # also set .Values.tunables.certificates.cacertfileMountEnabled to true when https endpoint is used
-    # also set .Values.tunables.certificates.cacertfile to the base64 encoded ca-cert.pem file
-    - name: HIVEFORGE_CONTROLLER_API_ENDPOINT
-      value: "http://hiveforge-controller-service.hiveforge-controller.svc.cluster.local:80"
+env:
+  - name: MIX_ENV
+    value: "prod"
+  - name: HIVEFORGE_CA_CERT_PATH
+    value: ""
+  # In-container path to the CA certificate file, if empty, http calls will be made
+  # Otherwise the default is /hiveforge_agent/misc/certificates/ca-cert.pem
+  # also set .Values.tunables.certificates.cacertfileMountEnabled to true when https endpoint is used
+  # also set .Values.tunables.certificates.cacertfile to the base64 encoded ca-cert.pem file
+  - name: HIVEFORGE_CONTROLLER_API_ENDPOINT
+    value: "http://hiveforge-controller-service.hiveforge-controller.svc.cluster.local:80"

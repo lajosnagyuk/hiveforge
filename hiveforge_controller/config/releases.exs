@@ -15,3 +15,6 @@ config :hiveforge_controller, HiveforgeController.Repo,
 
 config :hiveforge_controller,
   ecto_repos: [HiveforgeController.Repo]
+
+config :hiveforge_controller, HiveforgeController.{AgentController, JobController},
+  masterkey: System.get_env("HIVEFORGE_MASTER_KEY")

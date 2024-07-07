@@ -1,6 +1,7 @@
 defmodule HiveforgeController.JobController do
-  import Plug.Conn
-  alias HiveforgeController.JobService
+  use Plug.Builder
+  alias HiveforgeController.{JobService, ApiAuth, Repo}
+  require Logger
 
   def init(opts), do: opts
 
@@ -10,7 +11,8 @@ defmodule HiveforgeController.JobController do
   end
 
   def create_job(conn, params) do
-    with {:ok, decoded} <- decode_body(params),
+    with {:ok, _} <- ApiAuth.validate_request(conn, params),
+         {:ok, decoded} <- decode_body(params),
          {:ok, job} <- JobService.create_job(decoded) do
       conn
       |> put_status(:created)
@@ -18,32 +20,45 @@ defmodule HiveforgeController.JobController do
     else
       {:error, :invalid_encoding} ->
         error_response(conn, :bad_request, "Invalid base64 encoding")
+
       {:error, :invalid_json} ->
         error_response(conn, :bad_request, "Invalid JSON")
+
       {:error, changeset} ->
         errors = Ecto.Changeset.traverse_errors(changeset, fn {msg, _opts} -> msg end)
-        error_response(conn, :bad_request, %{errors: errors})
+        error_response(conn, :unprocessable_entity, %{errors: errors})
+
+      {:error, reason} ->
+        error_response(conn, :unauthorized, reason)
     end
   end
 
-  def list_jobs(conn, _params) do
-    jobs = JobService.list_jobs()
-    json_response(conn, jobs)
+  def list_jobs(conn, params) do
+    with {:ok, _} <- ApiAuth.validate_request(conn, params) do
+      jobs = JobService.list_jobs()
+      json_response(conn, jobs)
+    else
+      {:error, reason} ->
+        error_response(conn, :unauthorized, reason)
+    end
   end
 
-  def get_job(conn, %{"id" => id}) do
-    case JobService.get_job(String.to_integer(id)) do
-      {:ok, job} ->
-        conn
-        |> put_status(:ok)
-        |> json_response(job)
+  def get_job(conn, %{"id" => id} = params) do
+    with {:ok, _} <- ApiAuth.validate_request(conn, params),
+         {:ok, job} <- JobService.get_job(String.to_integer(id)) do
+      conn
+      |> put_status(:ok)
+      |> json_response(job)
+    else
       {:error, :not_found} ->
         conn
         |> put_status(:not_found)
         |> json_response(%{error: "Job not found"})
+
+      {:error, reason} ->
+        error_response(conn, :unauthorized, reason)
     end
   end
-
 
   defp decode_body(%{"body" => encoded_body}) do
     with {:ok, decoded} <- Base.decode64(encoded_body),

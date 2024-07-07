@@ -41,3 +41,8 @@ spec:
               value: "{{ .Values.tunables.database.clusterName }}.{{ .Values.tunables.database.namespace }}.svc.cluster.local"
             - name: DB_PORT
               value: "{{ .Values.tunables.network.pgPort }}"
+            - name: HIVEFORGE_MASTER_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: hiveforge-controller-master-key
+                  key: master-key

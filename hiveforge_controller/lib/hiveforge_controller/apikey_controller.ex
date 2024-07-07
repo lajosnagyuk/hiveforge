@@ -12,18 +12,13 @@ defmodule HiveforgeController.ApiKeyController do
   end
 
   def generate_key(conn, params) do
-    case get_req_header(conn, "x-master-key") do
-      [provided_key | _] ->
-        if ApiAuth.validate_master_key(provided_key) do
-          generate_initial_operator_key(conn, params)
-        else
-          conn
-          |> put_status(:unauthorized)
-          |> json_response(%{error: "Invalid master key"})
-        end
+    master_key = Application.get_env(:hiveforge_controller, :master_key)
+    provided_key = get_req_header(conn, "x-master-key") |> List.first()
 
-      [] ->
-        generate_key_with_api_key(conn, params)
+    if provided_key == master_key do
+      generate_initial_operator_key(conn, params)
+    else
+      generate_key_with_api_key(conn, params)
     end
   end
 
@@ -54,45 +49,6 @@ defmodule HiveforgeController.ApiKeyController do
         conn
         |> put_status(:unprocessable_entity)
         |> json_response(%{errors: errors})
-    end
-  end
-
-  defp generate_key_with_api_key(conn, params) do
-    with {:ok, auth_key} <- ApiAuth.validate_request(conn, params),
-         {:ok, key_type} <- validate_key_type(params["type"]),
-         {:ok, _} <- authorize_key_generation(auth_key, key_type) do
-      new_key = ApiAuth.generate_api_key(key_type)
-
-      changeset =
-        ApiKey.changeset(%ApiKey{}, %{
-          key: new_key,
-          type: key_type,
-          name: params["name"],
-          description: params["description"],
-          created_by: auth_key.key
-        })
-
-      case Repo.insert(changeset) do
-        {:ok, api_key} ->
-          conn
-          |> put_status(:created)
-          |> json_response(%{
-            key: api_key.key,
-            message: "#{String.capitalize(key_type)} generated successfully"
-          })
-
-        {:error, changeset} ->
-          errors = Ecto.Changeset.traverse_errors(changeset, fn {msg, _opts} -> msg end)
-
-          conn
-          |> put_status(:unprocessable_entity)
-          |> json_response(%{errors: errors})
-      end
-    else
-      {:error, reason} ->
-        conn
-        |> put_status(:unauthorized)
-        |> json_response(%{error: reason})
     end
   end
 

@@ -32,7 +32,8 @@ defmodule HiveforgeController.Application do
         scheme: scheme, plug: HiveforgeController.Router, options: options
       },
       HiveforgeController.Repo,
-      HiveforgeController.AgentMonitor
+      HiveforgeController.AgentMonitor,
+      HiveforgeController.SessionStore
     ]
 
     opts = [strategy: :one_for_one, name: HiveforgeController.Supervisor]

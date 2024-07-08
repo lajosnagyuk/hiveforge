@@ -3,11 +3,15 @@ defmodule HiveforgeController.Router do
 
   plug(Plug.Logger)
   plug(:match)
-
-  plug(Plug.Parsers,
-    parsers: [:json],
+  plug Plug.Session,
+    store: :ets,
+    key: "_hiveforge_key",
+    table: HiveforgeController.SessionStore.table_name()
+  plug :fetch_session
+  plug Plug.Parsers,
+    parsers: [:urlencoded, :json],
+    pass: ["*/*"],
     json_decoder: Jason
-  )
 
   plug(:dispatch)
 
@@ -38,6 +42,10 @@ defmodule HiveforgeController.Router do
   post("/api/v1/api_keys/generate",
     do: HiveforgeController.ApiKeyController.call(conn, action: :generate_key)
   )
+
+  # JWT funny business
+  get "/api/v1/auth/challenge", do: HiveforgeController.AuthController.call(conn, action: :request_challenge)
+  post "/api/v1/auth/verify", do: HiveforgeController.AuthController.call(conn, action: :verify_challenge)
 
   # Nappy clauses
   match(_, do: send_resp(conn, 404, "Not Found"))

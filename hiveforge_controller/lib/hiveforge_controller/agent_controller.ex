@@ -12,63 +12,60 @@ defmodule HiveforgeController.AgentController do
   end
 
   def register(conn, params) do
-    with {:ok, auth_key} <- ApiAuth.validate_request(conn, params),
-         :ok <- authorize_action(auth_key, :register) do
-      changeset = Agent.changeset(%Agent{}, params)
-      case Repo.insert(changeset) do
-        {:ok, agent} ->
-          conn
-          |> put_status(:created)
-          |> json_response(agent)
-        {:error, changeset} ->
-          errors = Ecto.Changeset.traverse_errors(changeset, fn {msg, _opts} -> msg end)
-          conn
-          |> put_status(:unprocessable_entity)
-          |> json_response(%{errors: errors})
-      end
+    with {:ok, _api_key} <- ApiAuth.validate_request(conn, params, :register),
+         changeset = Agent.changeset(%Agent{}, params),
+         {:ok, agent} <- Repo.insert(changeset) do
+      Logger.info("New agent registered - ID: #{agent.id}, API Key Type: #{_api_key.type}, Hash: #{_api_key.key_hash}")
+      conn
+      |> put_status(:created)
+      |> json_response(agent)
     else
+      {:error, changeset} ->
+        errors = Ecto.Changeset.traverse_errors(changeset, fn {msg, _opts} -> msg end)
+        Logger.warn("Agent registration failed - Errors: #{inspect(errors)}")
+        conn
+        |> put_status(:unprocessable_entity)
+        |> json_response(%{errors: errors})
       {:error, reason} ->
+        Logger.warn("Agent registration failed - Reason: #{inspect(reason)}")
         conn
         |> put_status(:unauthorized)
         |> json_response(%{error: reason})
     end
   end
 
+
   def heartbeat(conn, %{"agent_id" => agent_id} = params) do
-    with {:ok, auth_key} <- ApiAuth.validate_request(conn, params),
-         :ok <- authorize_action(auth_key, :heartbeat) do
-      case Repo.get_by(Agent, agent_id: agent_id) do
-        nil ->
-          conn
-          |> put_status(:not_found)
-          |> json_response(%{error: "Agent not found"})
-        agent ->
-          changeset = Agent.changeset(agent, %{
+    with {:ok, auth_key} <- ApiAuth.validate_request(conn, params, :heartbeat),
+         {:ok, agent} <- Repo.get_by(Agent, agent_id: agent_id),
+         changeset = Agent.changeset(agent, %{
             last_heartbeat: DateTime.utc_now(),
             status: "active"
-          })
-          case Repo.update(changeset) do
-            {:ok, updated_agent} ->
-              json_response(conn, %{message: "Heartbeat received", agent: updated_agent})
-            {:error, _changeset} ->
-              conn
-              |> put_status(:internal_server_error)
-              |> json_response(%{error: "Failed to update agent heartbeat"})
-          end
-      end
+         }),
+         {:ok, updated_agent} <- Repo.update(changeset) do
+      conn
+      |> put_status(:ok)
+      |> json_response(%{message: "Heartbeat received", agent: updated_agent})
+      Logger.info("Agent heartbeat received - ID: #{agent.id}, API Key Hash: #{auth_key.key_hash}")
     else
-      {:error, reason} ->
+      {:error, :not_found} ->
         conn
-        |> put_status(:unauthorized)
-        |> json_response(%{error: reason})
+        |> put_status(:not_found)
+        |> json_response(%{error: "Agent not found"})
+      {:error, reason} ->
+        Logger.warn("Agent heartbeat failed - ID: #{agent_id}, Reason: #{inspect(reason)}")
+        conn
+        |> put_status(:internal_server_error)
+        |> json_response(%{error: "Failed to update agent heartbeat"})
     end
   end
 
   def list_agents(conn, params) do
-    with {:ok, auth_key} <- ApiAuth.validate_request(conn, params),
-         :ok <- authorize_action(auth_key, :list_agents) do
+    with {:ok, auth_key} <- ApiAuth.validate_request(conn, params, :list_agents) do
       agents = Repo.all(Agent)
-      json_response(conn, agents)
+      conn
+      |> put_status(:ok)
+      |> json_response(agents)
     else
       {:error, reason} ->
         conn
@@ -78,17 +75,16 @@ defmodule HiveforgeController.AgentController do
   end
 
   def get_agent(conn, %{"id" => id} = params) do
-    with {:ok, auth_key} <- ApiAuth.validate_request(conn, params),
-         :ok <- authorize_action(auth_key, :get_agent) do
-      case Repo.get(Agent, id) do
-        nil ->
-          conn
-          |> put_status(:not_found)
-          |> json_response(%{error: "Agent not found"})
-        agent ->
-          json_response(conn, agent)
-      end
+    with {:ok, auth_key} <- ApiAuth.validate_request(conn, params, :get_agent),
+         {:ok, agent} <- Repo.get(Agent, id) do
+      conn
+      |> put_status(:ok)
+      |> json_response(agent)
     else
+      {:error, :not_found} ->
+        conn
+        |> put_status(:not_found)
+        |> json_response(%{error: "Agent not found"})
       {:error, reason} ->
         conn
         |> put_status(:unauthorized)

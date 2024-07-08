@@ -1,6 +1,7 @@
 defmodule HiveforgeController.JobController do
   use Plug.Builder
   alias HiveforgeController.{JobService, ApiAuth, Repo}
+  import Plug.Conn
   require Logger
 
   def init(opts), do: opts
@@ -14,6 +15,7 @@ defmodule HiveforgeController.JobController do
     with {:ok, _auth_key} <- ApiAuth.validate_request(conn, params, :create_job),
          {:ok, decoded} <- decode_body(params),
          {:ok, job} <- JobService.create_job(decoded) do
+      Logger.info("New job created - ID: #{job.id}, API Key Hash: #{_auth_key.key_hash}")
       conn
       |> put_status(:created)
       |> json_response(job)

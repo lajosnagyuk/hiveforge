@@ -2,8 +2,8 @@ package main
 
 import (
 	"bytes"
-	"crypto/hmac"
-	"crypto/sha256"
+	// "crypto/hmac"
+	// "crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -15,7 +15,13 @@ import (
 	"os/user"
 	"path/filepath"
 	"time"
+
 )
+
+type JWT struct {
+    Token     string    `json:"token"`
+    ExpiresAt time.Time `json:"expires_at"`
+}
 
 // Config represents the application configuration
 type Config struct {
@@ -90,40 +96,158 @@ func loadConfig() (Config, error) {
 	return Config{}, errors.New("config file not found in current directory or ~/.hiveforge/")
 }
 
-func generateSignature(apiKey, nonce string, body []byte) string {
-	transactionKey := hmac.New(sha256.New, []byte(apiKey))
-	transactionKey.Write([]byte("TRANSACTION" + nonce))
+func authenticateAndGetJWT(config Config) (*JWT, error) {
+    var keyToUse string
+    var keyHash string
 
-	signature := hmac.New(sha256.New, transactionKey.Sum(nil))
-	signature.Write(body)
-
-	return base64.StdEncoding.EncodeToString(signature.Sum(nil))
-}
-
-func makeAuthenticatedRequest(config Config, method, url string, body []byte) (*http.Response, error) {
-	req, err := http.NewRequest(method, url, bytes.NewBuffer(body))
-	if err != nil {
-		return nil, err
-	}
-
-	nonce := fmt.Sprintf("%d", time.Now().UnixNano())
-	signature := generateSignature(config.ApiKey, nonce, body)
-
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("x-api-key", config.ApiKey)
-	req.Header.Set("x-nonce", nonce)
-	req.Header.Set("x-signature", signature)
-
-	client := &http.Client{}
-	return client.Do(req)
-}
-
-func generateApiKey(config Config, keyType, name, description string) (*ApiKey, error) {
-    if keyType == "operator_key" && config.MasterKey == "" {
-        return nil, errors.New("master key is required to generate an operator key")
+    if config.MasterKey != "" {
+        keyToUse = config.MasterKey
+        keyHash = HashKey(config.MasterKey)
+    } else if config.ApiKey != "" {
+        keyToUse = config.ApiKey
+        keyHash = HashKey(config.ApiKey)
+    } else {
+        return nil, errors.New("neither master key nor API key is set")
     }
 
-    url := fmt.Sprintf("http://%s:%d/api/v1/api_keys", config.ApiEndpoint, config.Port)
+    fmt.Printf("DEBUG: Full Key Hash: %s\n", keyHash)
+    fmt.Printf("DEBUG: Sending Key ID: %s\n", keyHash[:8])
+
+    // Step 1: Request a challenge
+    challengeURL := fmt.Sprintf("http://%s:%d/api/v1/auth/challenge", config.ApiEndpoint, config.Port)
+    req, err := http.NewRequest("GET", challengeURL, nil)
+    if err != nil {
+        return nil, err
+    }
+
+    req.Header.Set("x-api-key-id", keyHash[:8]) // Send first 8 characters of the hash
+
+    fmt.Printf("DEBUG: Sending request to: %s\n", challengeURL)
+    fmt.Printf("DEBUG: Request headers: %v\n", req.Header)
+
+    resp, err := http.DefaultClient.Do(req)
+    if err != nil {
+        return nil, err
+    }
+    defer resp.Body.Close()
+
+    fmt.Printf("DEBUG: Response status: %s\n", resp.Status)
+    fmt.Printf("DEBUG: Response headers: %v\n", resp.Header)
+
+    if resp.StatusCode != http.StatusOK {
+        return nil, fmt.Errorf("failed to get challenge: %s", resp.Status)
+    }
+
+    var challengeResp struct {
+        Challenge string `json:"challenge"`
+    }
+    if err := json.NewDecoder(resp.Body).Decode(&challengeResp); err != nil {
+        return nil, err
+    }
+
+    // Step 2: Solve the challenge
+    challengeResponse := HashKey(challengeResp.Challenge + keyToUse)
+    fmt.Printf("DEBUG: Challenge: %s\n", challengeResp.Challenge)
+    fmt.Printf("DEBUG: Challenge Response: %s\n", challengeResponse)
+
+    // Only use the first 8 characters of the challenge response
+    shortChallengeResponse := challengeResponse[:8]
+    fmt.Printf("DEBUG: Short Challenge Response: %s\n", shortChallengeResponse)
+
+    // Step 3: Submit the challenge response
+    authURL := fmt.Sprintf("http://%s:%d/api/v1/auth/verify", config.ApiEndpoint, config.Port)
+    challengeResponseJSON, _ := json.Marshal(map[string]string{"challenge_response": shortChallengeResponse})
+    authReq, err := http.NewRequest("POST", authURL, bytes.NewBuffer(challengeResponseJSON))
+    if err != nil {
+        return nil, err
+    }
+    authReq.Header.Set("x-api-key-id", keyHash[:8])
+    authReq.Header.Set("Content-Type", "application/json")
+
+    fmt.Printf("DEBUG: Sending verification request to: %s\n", authURL)
+    fmt.Printf("DEBUG: Verification request headers: %v\n", authReq.Header)
+    fmt.Printf("DEBUG: Verification request body: %s\n", string(challengeResponseJSON))
+
+
+    authResp, err := http.DefaultClient.Do(authReq)
+    if err != nil {
+        return nil, err
+    }
+    defer authResp.Body.Close()
+
+    fmt.Printf("DEBUG: Verification response status: %s\n", authResp.Status)
+    fmt.Printf("DEBUG: Verification response headers: %v\n", authResp.Header)
+
+    body, _ := io.ReadAll(authResp.Body)
+    fmt.Printf("DEBUG: Verification response body: %s\n", string(body))
+
+    if authResp.StatusCode != http.StatusOK {
+        return nil, fmt.Errorf("authentication failed: %s", authResp.Status)
+    }
+
+    var jwt JWT
+    if err := json.NewDecoder(bytes.NewReader(body)).Decode(&jwt); err != nil {
+        return nil, err
+    }
+
+    return &jwt, nil
+}
+
+func storeJWT(jwt *JWT) error {
+    home, err := os.UserHomeDir()
+    if err != nil {
+        return err
+    }
+
+    jwtDir := filepath.Join(home, ".hiveforge")
+    if err := os.MkdirAll(jwtDir, 0700); err != nil {
+        return err
+    }
+
+    jwtFile := filepath.Join(jwtDir, "jwt.json")
+    file, err := os.Create(jwtFile)
+    if err != nil {
+        return err
+    }
+    defer file.Close()
+
+    return json.NewEncoder(file).Encode(jwt)
+}
+
+func getStoredJWT() (*JWT, error) {
+    home, err := os.UserHomeDir()
+    if err != nil {
+        return nil, err
+    }
+
+    jwtFile := filepath.Join(home, ".hiveforge", "jwt.json")
+    file, err := os.Open(jwtFile)
+    if err != nil {
+        return nil, err
+    }
+    defer file.Close()
+
+    var jwt JWT
+    if err := json.NewDecoder(file).Decode(&jwt); err != nil {
+        return nil, err
+    }
+
+    return &jwt, nil
+}
+// func generateSignature(apiKey, nonce string, body []byte) string {
+// 	transactionKey := hmac.New(sha256.New, []byte(apiKey))
+// 	transactionKey.Write([]byte("TRANSACTION" + nonce))
+
+// 	signature := hmac.New(sha256.New, transactionKey.Sum(nil))
+// 	signature.Write(body)
+
+// 	return base64.StdEncoding.EncodeToString(signature.Sum(nil))
+// }
+
+func generateApiKey(config Config, keyType, name, description string) (*ApiKey, error) {
+
+
+    url := fmt.Sprintf("http://%s:%d/api/v1/api_keys/generate", config.ApiEndpoint, config.Port)
 
     requestBody, err := json.Marshal(map[string]string{
         "type": keyType,
@@ -145,9 +269,17 @@ func generateApiKey(config Config, keyType, name, description string) (*ApiKey, 
         req.Header.Set("Content-Type", "application/json")
         req.Header.Set("x-master-key", config.MasterKey)
 
+        // Print the request details for debugging
+
+        printRequest(req, requestBody)
+
+
         client := &http.Client{}
         resp, reqErr = client.Do(req)
     } else if config.ApiKey != "" {
+        if config.Debug {
+            fmt.Println("Using API key for authenticated request")
+        }
         resp, reqErr = makeAuthenticatedRequest(config, "POST", url, requestBody)
     } else {
         return nil, errors.New("neither master key (for operator key) nor API key is set")
@@ -166,6 +298,13 @@ func generateApiKey(config Config, keyType, name, description string) (*ApiKey, 
         return nil, err
     }
 
+    // Print the response details for debugging
+    if config.Debug {
+        fmt.Printf("Response Status: %s\n", resp.Status)
+        fmt.Printf("Response Headers: %v\n", resp.Header)
+        fmt.Printf("Response Body: %s\n", string(body))
+    }
+
     if resp.StatusCode != http.StatusCreated {
         return nil, fmt.Errorf("failed to generate API key: %s", string(body))
     }
@@ -178,6 +317,44 @@ func generateApiKey(config Config, keyType, name, description string) (*ApiKey, 
 
     return &apiKey, nil
 }
+
+func printRequest(req *http.Request, body []byte) {
+    fmt.Printf("Request Method: %s\n", req.Method)
+    fmt.Printf("Request URL: %s\n", req.URL.String())
+    fmt.Printf("Request Headers: %v\n", req.Header)
+    fmt.Printf("Request Body: %s\n", string(body))
+}
+
+func makeAuthenticatedRequest(config Config, method, url string, body []byte) (*http.Response, error) {
+    jwt, err := getStoredJWT()
+    if err != nil || time.Now().After(jwt.ExpiresAt) {
+        jwt, err = authenticateAndGetJWT(config)
+        if err != nil {
+            return nil, err
+        }
+        if err := storeJWT(jwt); err != nil {
+            return nil, err
+        }
+    }
+
+    req, err := http.NewRequest(method, url, bytes.NewBuffer(body))
+    if err != nil {
+        return nil, err
+    }
+
+    req.Header.Set("Content-Type", "application/json")
+    req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", jwt.Token))
+
+    if config.Debug {
+        printRequest(req, body)
+    }
+
+    client := &http.Client{}
+    return client.Do(req)
+}
+
+
+
 
 func listApiKeys(config Config) ([]ApiKey, error) {
 	url := fmt.Sprintf("http://%s:%d/api/v1/api_keys", config.ApiEndpoint, config.Port)
@@ -523,31 +700,36 @@ func main() {
         return
     }
 
-	switch args[0] {
-	case "get":
-		handleGet(args[1:], config)
-	case "create":
-		handleCreate(args[1:], config)
-	case "describe":
-		handleDescribe(args[1:], config)
-	case "generate-key":
-		handleGenerateKey(args[1:], config)
-	case "list-keys":
-		handleListKeys(config)
-	default:
-		fmt.Println("Invalid command.")
-		printUsage()
-	}
+    switch args[0] {
+    case "authenticate":
+    	handleAuthenticate(config)
+    case "get":
+        handleGet(args[1:], config)
+    case "create":
+        handleCreate(args[1:], config)
+    case "describe":
+        handleDescribe(args[1:], config)
+    case "generate-key":
+        handleGenerateKey(args[1:], config)
+    case "list-keys":
+        handleListKeys(config)
+    default:
+        fmt.Println("Invalid command.")
+        printUsage()
+    }
 }
 
+
+
 func printUsage() {
-	fmt.Println("Usage: hiveforgectl [command] [subcommand] [args...] [-d|--debug]")
-	fmt.Println("Commands:")
-	fmt.Println("  get [jobs|agents]")
-	fmt.Println("  create job <json_file>")
-	fmt.Println("  describe [job|agent] <id>")
-	fmt.Println("  generate-key <type> <name> <description>")
-	fmt.Println("  list-keys")
+    fmt.Println("Usage: hiveforgectl [command] [subcommand] [args...] [-d|--debug]")
+    fmt.Println("Commands:")
+    fmt.Println("  authenticate")
+    fmt.Println("  get [jobs|agents]")
+    fmt.Println("  create job <json_file>")
+    fmt.Println("  describe [job|agent] <id>")
+    fmt.Println("  generate-key <type> <name> <description>")
+    fmt.Println("  list-keys")
 }
 
 func handleGet(args []string, config Config) {
@@ -636,6 +818,21 @@ func handleDescribe(args []string, config Config) {
 	}
 }
 
+func handleAuthenticate(config Config) {
+    jwt, err := authenticateAndGetJWT(config)
+    if err != nil {
+        fmt.Printf("Authentication failed: %v\n", err)
+        return
+    }
+
+    if err := storeJWT(jwt); err != nil {
+        fmt.Printf("Failed to store JWT: %v\n", err)
+        return
+    }
+
+    fmt.Println("Authentication successful. JWT stored.")
+}
+
 func handleGenerateKey(args []string, config Config) {
     if len(args) < 3 {
         fmt.Println("Usage: hiveforgectl generate-key <type> <name> <description>")
@@ -655,8 +852,6 @@ func handleGenerateKey(args []string, config Config) {
     apiKey, err := generateApiKey(config, keyType, name, description)
     if err != nil {
         switch err.Error() {
-        case "master key is required to generate an operator key":
-            fmt.Println("Error: Master key is not set. It is required to generate an operator key.")
         case "neither master key (for operator key) nor API key is set":
             fmt.Println("Error: Neither master key (for operator key) nor API key is set. At least one is required.")
         default:

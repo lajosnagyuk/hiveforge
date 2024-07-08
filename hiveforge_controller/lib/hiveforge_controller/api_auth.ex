@@ -1,72 +1,64 @@
 defmodule HiveforgeController.ApiAuth do
+  alias HiveforgeController.Repo
+  alias HiveforgeController.ApiKey
+  alias HiveforgeController.Common
+  import Plug.Conn
   require Logger
-  alias HiveforgeController.{Repo, ApiKey, Agent}
 
-  def generate_api_key(_type) do
-    :crypto.strong_rand_bytes(32)
-    |> Base.url_encode64(padding: false)
+  def get_authenticated_api_key(nil), do: {:error, "API key is missing"}
+  def get_authenticated_api_key(api_key_hash) do
+    case Repo.get_by(ApiKey, key_hash: api_key_hash) do
+      nil ->
+        Logger.warn("Authentication attempt with invalid API key hash: #{api_key_hash}")
+        {:error, "Invalid API key"}
+      api_key ->
+        Logger.info("API Key authenticated - Type: #{api_key.type}, Hash: #{api_key.key_hash}")
+        {:ok, api_key}
+    end
   end
 
-  def validate_request(conn, params, required_action) do
-    with {:ok, auth_key} <- get_auth_key(conn),
-         :ok <- validate_signature(auth_key, conn, params),
+  def validate_request(conn, _params, required_action) do
+    with {:ok, auth_key} <- get_authenticated_api_key(get_api_key_from_header(conn)),
          :ok <- authorize_action(auth_key, required_action) do
       {:ok, auth_key}
     end
   end
 
-  def get_auth_key(conn) do
-    case Plug.Conn.get_req_header(conn, "x-api-key") do
-      [key | _] ->
-        case Repo.get_by(ApiKey, key: key) do
-          nil -> {:error, "Invalid API key"}
-          api_key -> {:ok, api_key}
-        end
-      [] ->
-        {:error, "Missing API key"}
+  def get_api_key_from_header(conn) do
+    get_req_header(conn, "authorization")
+    |> List.first()
+  end
+
+  def authorize_action(%{type: "operator_key"}, _action), do: :ok
+  def authorize_action(%{type: "agent_key"}, action) when action in [:register, :heartbeat, :request_challenge, :verify_challenge], do: :ok
+  def authorize_action(%{type: "reader_key"}, action) when action in [:list_agents, :get_agent, :request_challenge, :verify_challenge], do: :ok
+  def authorize_action(_, _), do: {:error, "Unauthorized action for this key type"}
+
+  def get_api_key_by_hash(hash) do
+    case Repo.get_by(ApiKey, key_hash: hash) do
+      nil -> {:error, "Invalid API key"}
+      api_key -> {:ok, api_key}
     end
   end
 
-  def validate_signature(auth_key, conn, params) do
-    nonce = Plug.Conn.get_req_header(conn, "x-nonce") |> List.first()
-    signature = Plug.Conn.get_req_header(conn, "x-signature") |> List.first()
-    case {nonce, signature} do
-      {nil, _} ->
-        {:error, "Missing nonce"}
-      {_, nil} ->
-        {:error, "Missing signature"}
-      {nonce, signature} ->
-        expected_signature = generate_signature(auth_key.key, nonce, params)
-        if expected_signature == signature, do: :ok, else: {:error, "Invalid signature"}
+  def generate_api_key do
+    {key, hash} = do_generate_api_key()
+    Logger.info("New API Key generated - Hash: #{hash}")
+    {key, hash}
+  end
+
+  defp do_generate_api_key do
+    key = :crypto.strong_rand_bytes(32) |> Base.encode64
+    hash = Common.hash_key(key)
+    {key, hash}
+  end
+
+  def verify_challenge_response(challenge, response, key_hash) do
+    expected_response = Common.hash_key(challenge <> key_hash)
+    if response == expected_response do
+      :ok
+    else
+      {:error, "Invalid challenge response"}
     end
   end
-
-  defp generate_signature(key, nonce, params) do
-    transaction_key = :crypto.mac(:hmac, :sha256, key, "TRANSACTION" <> nonce)
-    :crypto.mac(:hmac, :sha256, transaction_key, Jason.encode!(params))
-    |> Base.encode64()
-  end
-
-  def validate_master_key(provided_key) do
-    master_key = Application.get_env(:hiveforge_controller, :master_key)
-    provided_key == master_key
-  end
-
-  defp get_agent_key(agent_id) do
-    Logger.debug("Getting agent key for agent_id: #{inspect(agent_id)}")
-    case Repo.get_by(Agent, agent_id: agent_id) do
-      nil ->
-        Logger.warn("Agent not found for agent_id: #{inspect(agent_id)}")
-        nil
-      agent ->
-        Logger.debug("Agent found: #{inspect(agent)}")
-        agent.agent_key
-    end
-  end
-
-  defp authorize_action(%{type: "operator_key"}, _action), do: :ok
-  defp authorize_action(%{type: "agent_key"}, action) when action in [:register, :heartbeat, :list_jobs, :get_job], do: :ok
-  defp authorize_action(%{type: "reader_key"}, action) when action in [:list_agents, :get_agent, :list_jobs, :get_job], do: :ok
-  defp authorize_action(_, _), do: {:error, "Unauthorized action for this key type"}
-
 end

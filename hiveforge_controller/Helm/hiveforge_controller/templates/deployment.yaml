@@ -46,3 +46,8 @@ spec:
                 secretKeyRef:
                   name: hiveforge-controller-master-key
                   key: master-key
+            - name: HIVEFORGE_JWT_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: hiveforge-controller-jwt-secret
+                  key: jwt-key

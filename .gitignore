@@ -3,3 +3,4 @@ erl_crash.dump
 _build/
 *.tgz
 hiveforgectl
+hiveforge_cli/hiveforgectl

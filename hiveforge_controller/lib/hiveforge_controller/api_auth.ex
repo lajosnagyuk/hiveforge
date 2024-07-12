@@ -31,7 +31,7 @@ defmodule HiveforgeController.ApiAuth do
 
   def authorize_action(%{type: "operator_key"}, _action), do: :ok
   def authorize_action(%{type: "agent_key"}, action) when action in [:register, :heartbeat, :request_challenge, :verify_challenge], do: :ok
-  def authorize_action(%{type: "reader_key"}, action) when action in [:list_agents, :get_agent, :request_challenge, :verify_challenge], do: :ok
+  def authorize_action(%{type: "reader_key"}, action) when action in [:list_agents, :get_agent, :request_challenge, :verify_challenge, :get_job, :list_jobs], do: :ok
   def authorize_action(_, _), do: {:error, "Unauthorized action for this key type"}
 
   def get_api_key_by_hash(hash) do

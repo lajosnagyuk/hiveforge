@@ -15,38 +15,19 @@ defmodule HiveforgeController.Router do
 
   plug(:dispatch)
 
+  # unauthenticated routes
   get("/", do: send_resp(conn, 200, "OK"))
   get("/api/v1/health", do: send_resp(conn, 200, "OK"))
   get("/api/v1/readiness", do: send_resp(conn, 200, "OK"))
-  # Jobs
-  get("/api/v1/jobs", do: HiveforgeController.JobController.call(conn, action: :list_jobs))
-  get("/api/v1/jobs/:id", do: HiveforgeController.JobController.call(conn, action: :get_job))
 
-  post("/api/v1/jobs", do: HiveforgeController.JobController.call(conn, action: :create_job))
-  # Agents
-  post("/api/v1/agents/register",
-    do: HiveforgeController.AgentController.call(conn, action: :register)
-  )
+  # JWT authentication routes (takes API key hash)
+  get("/api/v1/auth/challenge", do: HiveforgeController.AuthController.call(conn, action: :request_challenge))
+  post("/api/v1/auth/verify", do: HiveforgeController.AuthController.call(conn, action: :verify_challenge))
 
-  post("/api/v1/agents/heartbeat",
-    do: HiveforgeController.AgentController.call(conn, action: :heartbeat)
-  )
-
-  get("/api/v1/agents/:id",
-    do: HiveforgeController.AgentController.call(conn, action: :get_agent)
-  )
-
-  get("/api/v1/agents", do: HiveforgeController.AgentController.call(conn, action: :list_agents))
-
-  # API Keys
-  post("/api/v1/api_keys/generate",
-    do: HiveforgeController.ApiKeyController.call(conn, action: :generate_key)
-  )
-
-  # JWT funny business
-  get "/api/v1/auth/challenge", do: HiveforgeController.AuthController.call(conn, action: :request_challenge)
-  post "/api/v1/auth/verify", do: HiveforgeController.AuthController.call(conn, action: :verify_challenge)
+  # Forward everything else to the ProtectedRouter
+  forward("/api/v1", to: HiveforgeController.ProtectedRouter)
 
   # Nappy clauses
   match(_, do: send_resp(conn, 404, "Not Found"))
+
 end

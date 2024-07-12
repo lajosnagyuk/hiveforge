@@ -81,20 +81,20 @@ defmodule HiveforgeController.AuthController do
     master_key_hash = Common.hash_key(config[:masterkey])
 
     try do
-       cond do
-         master_key_hash == api_key_id ->
-           Logger.debug("Verifying Master Key challenge")
-           if verify_challenge_response(stored_challenge, challenge_response, config[:masterkey]) do
-             token = JWTAuth.generate_token(%{type: "masterkey", key_hash: master_key_hash})
-             json_response(conn, 200, %{token: token})
-           else
-             Logger.debug("Invalid challenge response for Master Key")
-             json_response(conn, 401, %{error: "Invalid challenge response"})
-           end
+      cond do
+        master_key_hash == api_key_id ->
+          Logger.debug("Verifying Master Key challenge")
+          if verify_challenge_response(stored_challenge, challenge_response, config[:masterkey]) do
+            token = JWTAuth.generate_token(%{type: "masterkey", key_hash: master_key_hash})
+            json_response(conn, 200, %{token: token})
+          else
+            Logger.debug("Invalid challenge response for Master Key")
+            json_response(conn, 401, %{error: "Invalid challenge response"})
+          end
         true ->
           Logger.debug("Verifying API Key challenge")
           with {:ok, api_key} <- ApiAuth.get_api_key_by_hash(api_key_id),
-               :ok <- ApiAuth.authorize_action(api_key, :verify_challenge),
+               :ok <- ApiAuth.authorize_action(%{"type" => api_key.type}, :verify_challenge),
                true <- verify_challenge_response(stored_challenge, challenge_response, api_key.key_hash),
                token <- JWTAuth.generate_token(api_key) do
             json_response(conn, 200, %{token: token})

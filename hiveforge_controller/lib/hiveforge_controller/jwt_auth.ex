@@ -8,7 +8,10 @@ defmodule HiveforgeController.JWTAuth do
   end
 
   def generate_token(api_key) do
-    extra_claims = %{"kid" => api_key.key_hash}
+    extra_claims = %{
+      "kid" => api_key.key_hash,
+      "type" => api_key.type
+    }
     signer = Joken.Signer.create("HS256", get_jwt_secret())
     {:ok, token, _claims} = generate_and_sign(extra_claims, signer)
     token

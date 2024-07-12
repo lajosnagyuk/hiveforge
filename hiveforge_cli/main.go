@@ -15,12 +15,13 @@ import (
 	"os/user"
 	"path/filepath"
 	"time"
-
+	"github.com/golang-jwt/jwt/v4"
 )
 
 type JWT struct {
     Token     string    `json:"token"`
     ExpiresAt time.Time `json:"expires_at"`
+    IssuedAt  time.Time `json:"issued_at"`
 }
 
 // Config represents the application configuration
@@ -63,37 +64,61 @@ type Agent struct {
 }
 
 // loadConfig loads the configuration from a file
-func loadConfig() (Config, error) {
-	configPaths := []string{
-		"config.json",
-	}
+func loadConfig() (Config, *JWT, error) {
+    configPaths := []string{
+        "config.json",
+    }
 
-	user, err := user.Current()
-	if err != nil {
-		return Config{}, err
-	}
+    jwtPaths := []string{
+        "jwt.json",
+    }
 
-	homeConfigPath := filepath.Join(user.HomeDir, ".hiveforge", "config.json")
-	configPaths = append(configPaths, homeConfigPath)
+    user, err := user.Current()
+    if err != nil {
+        return Config{}, nil, err
+    }
 
-	for _, path := range configPaths {
-		if _, err := os.Stat(path); err == nil {
-			file, err := os.ReadFile(path)
-			if err != nil {
-				return Config{}, err
-			}
+    homeConfigPath := filepath.Join(user.HomeDir, ".hiveforge", "config.json")
+    homeJWTPath := filepath.Join(user.HomeDir, ".hiveforge", "jwt.json")
+    configPaths = append(configPaths, homeConfigPath)
+    jwtPaths = append(jwtPaths, homeJWTPath)
 
-			var config Config
-			err = json.Unmarshal(file, &config)
-			if err != nil {
-				return Config{}, err
-			}
+    var config Config
+    var jwt JWT
 
-			return config, nil
-		}
-	}
+    for _, path := range configPaths {
+        if _, err := os.Stat(path); err == nil {
+            file, err := os.ReadFile(path)
+            if err != nil {
+                return Config{}, nil, err
+            }
 
-	return Config{}, errors.New("config file not found in current directory or ~/.hiveforge/")
+            err = json.Unmarshal(file, &config)
+            if err != nil {
+                return Config{}, nil, err
+            }
+
+            break
+        }
+    }
+
+    for _, path := range jwtPaths {
+        if _, err := os.Stat(path); err == nil {
+            file, err := os.ReadFile(path)
+            if err != nil {
+                return config, nil, err
+            }
+
+            err = json.Unmarshal(file, &jwt)
+            if err != nil {
+                return config, nil, err
+            }
+
+            return config, &jwt, nil
+        }
+    }
+
+    return config, nil, nil
 }
 
 func authenticateAndGetJWT(config Config) (*JWT, error) {
@@ -185,12 +210,41 @@ func authenticateAndGetJWT(config Config) (*JWT, error) {
         return nil, fmt.Errorf("authentication failed: %s", authResp.Status)
     }
 
-    var jwt JWT
-    if err := json.NewDecoder(bytes.NewReader(body)).Decode(&jwt); err != nil {
+    var tokenResponse struct {
+        Token string `json:"token"`
+    }
+    if err := json.NewDecoder(bytes.NewReader(body)).Decode(&tokenResponse); err != nil {
         return nil, err
     }
 
-    return &jwt, nil
+    // Parse the JWT to extract issued and expiration times
+    token, _, err := new(jwt.Parser).ParseUnverified(tokenResponse.Token, jwt.MapClaims{})
+    if err != nil {
+        return nil, fmt.Errorf("failed to parse JWT: %w", err)
+    }
+
+    claims, ok := token.Claims.(jwt.MapClaims)
+    if !ok {
+        return nil, fmt.Errorf("invalid token claims")
+    }
+
+    exp, ok := claims["exp"].(float64)
+    if !ok {
+        return nil, fmt.Errorf("invalid expiration claim")
+    }
+
+    iat, ok := claims["iat"].(float64)
+    if !ok {
+        return nil, fmt.Errorf("invalid issued at claim")
+    }
+
+    jwt := &JWT{
+        Token:     tokenResponse.Token,
+        ExpiresAt: time.Unix(int64(exp), 0),
+        IssuedAt:  time.Unix(int64(iat), 0),
+    }
+
+    return jwt, nil
 }
 
 func storeJWT(jwt *JWT) error {
@@ -244,9 +298,7 @@ func getStoredJWT() (*JWT, error) {
 // 	return base64.StdEncoding.EncodeToString(signature.Sum(nil))
 // }
 
-func generateApiKey(config Config, keyType, name, description string) (*ApiKey, error) {
-
-
+func generateApiKey(config Config, jwt *JWT, keyType, name, description string) (*ApiKey, error) {
     url := fmt.Sprintf("http://%s:%d/api/v1/api_keys/generate", config.ApiEndpoint, config.Port)
 
     requestBody, err := json.Marshal(map[string]string{
@@ -258,38 +310,9 @@ func generateApiKey(config Config, keyType, name, description string) (*ApiKey, 
         return nil, err
     }
 
-    var resp *http.Response
-    var reqErr error
-
-    if keyType == "operator_key" && config.MasterKey != "" {
-        req, err := http.NewRequest("POST", url, bytes.NewBuffer(requestBody))
-        if err != nil {
-            return nil, err
-        }
-        req.Header.Set("Content-Type", "application/json")
-        req.Header.Set("x-master-key", config.MasterKey)
-
-        // Print the request details for debugging
-
-        printRequest(req, requestBody)
-
-
-        client := &http.Client{}
-        resp, reqErr = client.Do(req)
-    } else if config.ApiKey != "" {
-        if config.Debug {
-            fmt.Println("Using API key for authenticated request")
-        }
-        resp, reqErr = makeAuthenticatedRequest(config, "POST", url, requestBody)
-    } else {
-        return nil, errors.New("neither master key (for operator key) nor API key is set")
-    }
-
-    if reqErr != nil {
-        return nil, reqErr
-    }
-    if resp == nil {
-        return nil, errors.New("no response received from server")
+    resp, err := makeAuthenticatedRequest(config, jwt, "POST", url, requestBody)
+    if err != nil {
+        return nil, err
     }
     defer resp.Body.Close()
 
@@ -298,7 +321,6 @@ func generateApiKey(config Config, keyType, name, description string) (*ApiKey, 
         return nil, err
     }
 
-    // Print the response details for debugging
     if config.Debug {
         fmt.Printf("Response Status: %s\n", resp.Status)
         fmt.Printf("Response Headers: %v\n", resp.Header)
@@ -325,15 +347,27 @@ func printRequest(req *http.Request, body []byte) {
     fmt.Printf("Request Body: %s\n", string(body))
 }
 
-func makeAuthenticatedRequest(config Config, method, url string, body []byte) (*http.Response, error) {
-    jwt, err := getStoredJWT()
-    if err != nil || time.Now().After(jwt.ExpiresAt) {
-        jwt, err = authenticateAndGetJWT(config)
-        if err != nil {
-            return nil, err
+// Use the JWT to make an authenticated request to the API
+func makeAuthenticatedRequest(config Config, jwt *JWT, method, url string, body []byte) (*http.Response, error) {
+    needsRefresh := func(jwt *JWT) bool {
+        if jwt == nil {
+            return true
         }
+        // Check if we're more than 2/3 through the validity duration
+        return time.Now().After(jwt.ExpiresAt.Add(-1 * jwt.ExpiresAt.Sub(jwt.IssuedAt) / 3))
+    }
+
+    if needsRefresh(jwt) {
+        newJWT, err := authenticateAndGetJWT(config)
+        if err != nil {
+            return nil, fmt.Errorf("failed to refresh JWT: %w", err)
+        }
+        *jwt = *newJWT
         if err := storeJWT(jwt); err != nil {
-            return nil, err
+            return nil, fmt.Errorf("failed to store refreshed JWT: %w", err)
+        }
+        if config.Debug {
+            fmt.Println("JWT refreshed proactively")
         }
     }
 
@@ -353,15 +387,12 @@ func makeAuthenticatedRequest(config Config, method, url string, body []byte) (*
     return client.Do(req)
 }
 
+func listApiKeys(apiEndpoint string, port int, jwt *JWT) ([]ApiKey, error) {
+	url := fmt.Sprintf("http://%s:%d/api/v1/api_keys", apiEndpoint, port)
 
-
-
-func listApiKeys(config Config) ([]ApiKey, error) {
-	url := fmt.Sprintf("http://%s:%d/api/v1/api_keys", config.ApiEndpoint, config.Port)
-
-	resp, err := makeAuthenticatedRequest(config, "GET", url, nil)
+	resp, err := makeAuthenticatedRequest(Config{ApiEndpoint: apiEndpoint, Port: port}, jwt, "GET", url, nil)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to make authenticated request: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -377,7 +408,7 @@ func listApiKeys(config Config) ([]ApiKey, error) {
 	var apiKeys []ApiKey
 	err = json.Unmarshal(body, &apiKeys)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to unmarshal API keys: %w", err)
 	}
 
 	return apiKeys, nil
@@ -412,12 +443,11 @@ func displayApiKeys(apiKeys []ApiKey) {
 	printSeparator(maxWidths)
 }
 
-// getJobs retrieves jobs from the API
-func getJobs(config Config) ([]Job, error) {
-    url := fmt.Sprintf("http://%s:%d/api/v1/jobs", config.ApiEndpoint, config.Port)
+// getJobs retrieves all jobs from the API
+func getJobs(apiEndpoint string, port int, debug bool, jwt *JWT) ([]Job, error) {
+    url := fmt.Sprintf("http://%s:%d/api/v1/jobs", apiEndpoint, port)
     fmt.Printf("Requesting URL: %s\n", url)  // Debug print
-
-    resp, err := http.Get(url)
+    resp, err := makeAuthenticatedRequest(Config{ApiEndpoint: apiEndpoint, Port: port}, jwt, "GET", url, nil)
     if err != nil {
         return nil, fmt.Errorf("HTTP request failed: %v", err)
     }
@@ -431,8 +461,10 @@ func getJobs(config Config) ([]Job, error) {
     }
 
     // Print the raw API response
-    fmt.Println("Raw API response:")
-    fmt.Println(string(body))
+    if debug {
+	    fmt.Println("Raw API response:")
+	    fmt.Println(string(body))
+    }
 
     var jobs []Job
     err = json.Unmarshal(body, &jobs)
@@ -447,11 +479,11 @@ func getJobs(config Config) ([]Job, error) {
     return jobs, nil
 }
 
-func describeJob(config Config, id string) error {
-    url := fmt.Sprintf("http://%s:%d/api/v1/jobs/%s", config.ApiEndpoint, config.Port, id)
+func describeJob(apiEndpoint string, port int, debug bool, id string, jwt *JWT) error {
+    url := fmt.Sprintf("http://%s:%d/api/v1/jobs/%s", apiEndpoint, port, id)
     fmt.Printf("Requesting URL: %s\n", url)
+    resp, err := makeAuthenticatedRequest(Config{ApiEndpoint: apiEndpoint, Port: port}, jwt, "GET", url, nil)
 
-    resp, err := http.Get(url)
     if err != nil {
         return fmt.Errorf("HTTP request failed: %v", err)
     }
@@ -541,59 +573,61 @@ func printRow(row []string, widths []int) {
 	fmt.Println()
 }
 
-func createJob(config Config, jsonFilePath string) error {
+func createJob(apiEndpoint string, port int, debug bool, jsonFilePath string, jwt *JWT) error {
 	// Read the JSON file
 	jsonData, err := os.ReadFile(jsonFilePath)
 	if err != nil {
-		return fmt.Errorf("error reading JSON file: %v", err)
+		return fmt.Errorf("error reading JSON file: %w", err)
 	}
 
 	// Validate JSON
 	var job map[string]interface{}
 	if err := json.Unmarshal(jsonData, &job); err != nil {
-		return fmt.Errorf("invalid JSON: %v", err)
+		return fmt.Errorf("invalid JSON: %w", err)
 	}
 
 	// Encode the JSON in base64
 	encodedJob := base64.StdEncoding.EncodeToString(jsonData)
-	requestBody := fmt.Sprintf(`{"body":"%s"}`, encodedJob)
+	requestBody := []byte(fmt.Sprintf(`{"body":"%s"}`, encodedJob))
 
-	url := fmt.Sprintf("http://%s:%d/api/v1/jobs", config.ApiEndpoint, config.Port)
-	resp, err := http.Post(url, "application/json", bytes.NewBufferString(requestBody))
+	url := fmt.Sprintf("http://%s:%d/api/v1/jobs", apiEndpoint, port)
+
+	resp, err := makeAuthenticatedRequest(Config{ApiEndpoint: apiEndpoint, Port: port}, jwt, "POST", url, requestBody)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to make authenticated request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to read response body: %w", err)
 	}
 
-	if config.Debug {
+	if debug {
 		fmt.Println("Raw API response:")
 		fmt.Println(string(body))
 	}
 
 	if resp.StatusCode != http.StatusCreated {
-		return fmt.Errorf("failed to create job: %s", string(body))
+		return fmt.Errorf("failed to create job (status %d): %s", resp.StatusCode, string(body))
 	}
 
 	fmt.Println("Job created successfully")
 	return nil
 }
 
-func getAgents(config Config) ([]Agent, error) {
+func getAgents(config Config, jwt *JWT) ([]Agent, error) {
     url := fmt.Sprintf("http://%s:%d/api/v1/agents", config.ApiEndpoint, config.Port)
-    resp, err := http.Get(url)
+
+    resp, err := makeAuthenticatedRequest(config, jwt, "GET", url, nil)
     if err != nil {
-        return nil, err
+        return nil, fmt.Errorf("failed to make authenticated request: %w", err)
     }
     defer resp.Body.Close()
 
     body, err := io.ReadAll(resp.Body)
     if err != nil {
-        return nil, err
+        return nil, fmt.Errorf("failed to read response body: %w", err)
     }
 
     if config.Debug {
@@ -604,23 +638,25 @@ func getAgents(config Config) ([]Agent, error) {
     var agents []Agent
     err = json.Unmarshal(body, &agents)
     if err != nil {
-        return nil, err
+        return nil, fmt.Errorf("failed to unmarshal response: %w", err)
     }
 
     return agents, nil
 }
 
-func getAgent(config Config, id string) (*Agent, error) {
+func getAgent(config Config, jwt *JWT, id string) (*Agent, error) {
     url := fmt.Sprintf("http://%s:%d/api/v1/agents/%s", config.ApiEndpoint, config.Port, id)
-    resp, err := http.Get(url)
+    resp, err := makeAuthenticatedRequest(config, jwt, "GET", url, nil)
+
     if err != nil {
-        return nil, err
+        return nil, fmt.Errorf("failed to make authenticated request: %w", err)
     }
+
     defer resp.Body.Close()
 
     body, err := io.ReadAll(resp.Body)
     if err != nil {
-        return nil, err
+        return nil, fmt.Errorf("failed to read response body: %w", err)
     }
 
     if config.Debug {
@@ -631,7 +667,7 @@ func getAgent(config Config, id string) (*Agent, error) {
     var agent Agent
     err = json.Unmarshal(body, &agent)
     if err != nil {
-        return nil, err
+        return nil, fmt.Errorf("failed to unmarshal JSON: %w", err)
     }
 
     return &agent, nil
@@ -684,7 +720,7 @@ func main() {
         return
     }
 
-    config, err := loadConfig()
+    config, jwt, err := loadConfig()
     if err != nil {
         fmt.Println("Error loading config:", err)
         return
@@ -702,23 +738,22 @@ func main() {
 
     switch args[0] {
     case "authenticate":
-    	handleAuthenticate(config)
+        handleAuthenticate(config)
     case "get":
-        handleGet(args[1:], config)
+        handleGet(args[1:], config, jwt)
     case "create":
-        handleCreate(args[1:], config)
+        handleCreate(args[1:], config, jwt)
     case "describe":
-        handleDescribe(args[1:], config)
+        handleDescribe(args[1:], config, jwt)
     case "generate-key":
-        handleGenerateKey(args[1:], config)
+        handleGenerateKey(args[1:], config, jwt)
     case "list-keys":
-        handleListKeys(config)
+        handleListKeys(config, jwt)
     default:
         fmt.Println("Invalid command.")
         printUsage()
     }
 }
-
 
 
 func printUsage() {
@@ -732,45 +767,45 @@ func printUsage() {
     fmt.Println("  list-keys")
 }
 
-func handleGet(args []string, config Config) {
-	if len(args) < 1 {
-		fmt.Println("Usage: hiveforgectl get [jobs|agents]")
-		return
-	}
+func handleGet(args []string, config Config, jwt *JWT) {
+    if len(args) < 1 {
+        fmt.Println("Usage: hiveforgectl get [jobs|agents]")
+        return
+    }
 
-	switch args[0] {
-	case "jobs":
-		fmt.Println("Fetching jobs...")
-		jobs, err := getJobs(config)
-		if err != nil {
-			fmt.Printf("Error fetching jobs: %v\n", err)
-			return
-		}
-		if len(jobs) == 0 {
-			fmt.Println("No jobs found.")
-		} else {
-			fmt.Printf("Retrieved %d jobs. Displaying...\n", len(jobs))
-			displayJobs(jobs)
-		}
-	case "agents":
-		fmt.Println("Fetching agents...")
-		agents, err := getAgents(config)
-		if err != nil {
-			fmt.Printf("Error fetching agents: %v\n", err)
-			return
-		}
-		if len(agents) == 0 {
-			fmt.Println("No agents found.")
-		} else {
-			fmt.Printf("Retrieved %d agents. Displaying...\n", len(agents))
-			displayAgents(agents)
-		}
-	default:
-		fmt.Println("Invalid subcommand. Usage: hiveforgectl get [jobs|agents]")
-	}
+    switch args[0] {
+    case "jobs":
+        fmt.Println("Fetching jobs...")
+        jobs, err := getJobs(config.ApiEndpoint, config.Port, config.Debug, jwt)
+        if err != nil {
+            fmt.Printf("Error fetching jobs: %v\n", err)
+            return
+        }
+        if len(jobs) == 0 {
+            fmt.Println("No jobs found.")
+        } else {
+            fmt.Printf("Retrieved %d jobs. Displaying...\n", len(jobs))
+            displayJobs(jobs)
+        }
+    case "agents":
+        fmt.Println("Fetching agents...")
+        agents, err := getAgents(config, jwt)
+        if err != nil {
+            fmt.Printf("Error fetching agents: %v\n", err)
+            return
+        }
+        if len(agents) == 0 {
+            fmt.Println("No agents found.")
+        } else {
+            fmt.Printf("Retrieved %d agents. Displaying...\n", len(agents))
+            displayAgents(agents)
+        }
+    default:
+        fmt.Println("Invalid subcommand. Usage: hiveforgectl get [jobs|agents]")
+    }
 }
 
-func handleCreate(args []string, config Config) {
+func handleCreate(args []string, config Config, jwt *JWT) {
 	if len(args) < 2 {
 		fmt.Println("Usage: hiveforgectl create job <json_file>")
 		return
@@ -778,7 +813,7 @@ func handleCreate(args []string, config Config) {
 
 	if args[0] == "job" {
 		jsonFilePath := args[1]
-		err := createJob(config, jsonFilePath)
+		err := createJob(config.ApiEndpoint, config.Port, config.Debug, jsonFilePath, jwt)
 		if err != nil {
 			fmt.Println("Error creating job:", err)
 		}
@@ -787,35 +822,35 @@ func handleCreate(args []string, config Config) {
 	}
 }
 
-func handleDescribe(args []string, config Config) {
-	if len(args) < 2 {
-		fmt.Println("Usage: hiveforgectl describe [job|agent] <id>")
-		return
-	}
+func handleDescribe(args []string, config Config, jwt *JWT) {
+    if len(args) < 2 {
+        fmt.Println("Usage: hiveforgectl describe [job|agent] <id>")
+        return
+    }
 
-	switch args[0] {
-	case "job":
-		jobID := args[1]
-		err := describeJob(config, jobID)
-		if err != nil {
-			fmt.Printf("Error describing job: %v\n", err)
-		}
-	case "agent":
-		agentID := args[1]
-		agent, err := getAgent(config, agentID)
-		if err != nil {
-			fmt.Printf("Error describing agent: %v\n", err)
-			return
-		}
-		agentJSON, err := json.MarshalIndent(agent, "", "  ")
-		if err != nil {
-			fmt.Printf("Error formatting agent data: %v\n", err)
-			return
-		}
-		fmt.Println(string(agentJSON))
-	default:
-		fmt.Println("Invalid subcommand. Usage: hiveforgectl describe [job|agent] <id>")
-	}
+    switch args[0] {
+    case "job":
+        jobID := args[1]
+        err := describeJob(config.ApiEndpoint, config.Port, config.Debug, jobID, jwt)
+        if err != nil {
+            fmt.Printf("Error describing job: %v\n", err)
+        }
+    case "agent":
+        agentID := args[1]
+        agent, err := getAgent(config, jwt, agentID)
+        if err != nil {
+            fmt.Printf("Error describing agent: %v\n", err)
+            return
+        }
+        agentJSON, err := json.MarshalIndent(agent, "", "  ")
+        if err != nil {
+            fmt.Printf("Error formatting agent data: %v\n", err)
+            return
+        }
+        fmt.Println(string(agentJSON))
+    default:
+        fmt.Println("Invalid subcommand. Usage: hiveforgectl describe [job|agent] <id>")
+    }
 }
 
 func handleAuthenticate(config Config) {
@@ -833,7 +868,7 @@ func handleAuthenticate(config Config) {
     fmt.Println("Authentication successful. JWT stored.")
 }
 
-func handleGenerateKey(args []string, config Config) {
+func handleGenerateKey(args []string, config Config, jwt *JWT) {
     if len(args) < 3 {
         fmt.Println("Usage: hiveforgectl generate-key <type> <name> <description>")
         return
@@ -849,7 +884,7 @@ func handleGenerateKey(args []string, config Config) {
     }
 
     keyType, name, description := args[0], args[1], args[2]
-    apiKey, err := generateApiKey(config, keyType, name, description)
+    apiKey, err := generateApiKey(config, jwt, keyType, name, description)
     if err != nil {
         switch err.Error() {
         case "neither master key (for operator key) nor API key is set":
@@ -862,8 +897,8 @@ func handleGenerateKey(args []string, config Config) {
     fmt.Printf("Successfully generated %s API key: %s\n", keyType, apiKey.Key)
 }
 
-func handleListKeys(config Config) {
-	apiKeys, err := listApiKeys(config)
+func handleListKeys(config Config, jwt *JWT) {
+    apiKeys, err := listApiKeys(config.ApiEndpoint, config.Port, jwt)
 	if err != nil {
 		fmt.Printf("Error listing API keys: %v\n", err)
 		return

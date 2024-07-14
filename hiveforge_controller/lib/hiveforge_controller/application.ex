@@ -33,7 +33,7 @@ defmodule HiveforgeController.Application do
       },
       HiveforgeController.Repo,
       HiveforgeController.AgentMonitor,
-      HiveforgeController.SessionStore
+      HiveforgeController.SessionStore,
     ]
 
     opts = [strategy: :one_for_one, name: HiveforgeController.Supervisor]

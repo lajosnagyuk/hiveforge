@@ -16,8 +16,7 @@ defmodule HiveforgeController.JobController do
 
     with {:ok, decoded} <- decode_body(params),
          {:ok, job} <- JobService.create_job(decoded, claims) do
-      Logger.info("New job created - ID: #{job.id}, API Key Hash: #{claims.kid}")
-
+      Logger.info("New job created - ID: #{job.id}, API Key Hash: #{claims["kid"]}")
       conn
       |> put_status(:created)
       |> put_resp_content_type("application/json")

@@ -8,6 +8,7 @@ defmodule HiveforgeController.ApiKeyService do
          :ok <- authorize_key_generation(claims, key_type),
          {new_key, key_hash} <- do_generate_api_key(),
          api_key_attrs <- %{
+           key: new_key,
            key_hash: key_hash,
            type: key_type,
            name: params["name"] || "Generated #{key_type}",
@@ -76,12 +77,14 @@ defmodule HiveforgeController.ApiKeyService do
   def get_api_key_by_hash(nil), do: {:error, "API key is missing"}
 
   def get_api_key_by_hash(hash) do
-    case Repo.get_by(ApiKey, key_hash: hash) do
+    query = from(a in ApiKey, where: a.key_hash == ^hash, select: [:id, :key, :key_hash, :type, :name])
+    case Repo.one(query) do
       nil ->
         Logger.warn("Authentication attempt with invalid API key hash: #{hash}")
         {:error, "Invalid API key"}
 
       api_key ->
+        Logger.debug("API Key found: #{inspect(api_key, pretty: true)}")
         {:ok, api_key}
     end
   end

@@ -3,10 +3,8 @@ package main
 import (
 	"bytes"
 	// "crypto/hmac"
-	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
-	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
@@ -123,18 +121,18 @@ func loadConfig() (Config, *JWT, error) {
 }
 
 func authenticateAndGetJWT(config Config) (*JWT, error) {
-    var keyToUse string
-    var keyHash string
+	var keyToUse string
+	var keyHash string
 
-    if config.MasterKey != "" {
-        keyToUse = config.MasterKey
-        keyHash = hashKey(config.MasterKey)
-    } else if config.ApiKey != "" {
-        keyToUse = config.ApiKey
-        keyHash = hashKey(config.ApiKey)
-    } else {
-        return nil, errors.New("neither master key nor API key is set")
-    }
+	if config.MasterKey != "" {
+		keyToUse = config.MasterKey
+		keyHash = hashKey(config.MasterKey)
+	} else if config.ApiKey != "" {
+		keyToUse = config.ApiKey
+		keyHash = hashKey(config.ApiKey)
+	} else {
+		return nil, errors.New("neither master key nor API key is set")
+	}
 
 	// Step 1: Request a challenge
 	challengeURL := fmt.Sprintf("http://%s:%d/api/v1/auth/challenge", config.ApiEndpoint, config.Port)
@@ -143,7 +141,7 @@ func authenticateAndGetJWT(config Config) (*JWT, error) {
 		return nil, err
 	}
 
-	req.Header.Set("x-api-key-id", keyHash) // Send the full Argon2 hash
+	req.Header.Set("x-api-key-id", keyHash) // Send the BLAKE3 hash
 
     fmt.Printf("DEBUG: Sending request to: %s\n", challengeURL)
     fmt.Printf("DEBUG: Request headers: %v\n", req.Header)
@@ -245,11 +243,7 @@ func authenticateAndGetJWT(config Config) (*JWT, error) {
     return jwt, nil
 }
 
-func solveChallenge(challenge, key string) string {
-	// Use SHA-256 for the challenge response (unchanged)
-	hash := sha256.Sum256([]byte(challenge + key))
-	return hex.EncodeToString(hash[:])
-}
+
 
 func storeJWT(jwt *JWT) error {
     home, err := os.UserHomeDir()

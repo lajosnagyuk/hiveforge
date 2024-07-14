@@ -4,6 +4,8 @@ defmodule HiveforgeController.AuthController do
   import Plug.Conn
   require Logger
 
+  @master_key_term :hiveforge_master_key
+
   def init(opts), do: opts
 
   def call(conn, opts) do
@@ -16,12 +18,13 @@ defmodule HiveforgeController.AuthController do
     Logger.debug("Received request for challenge")
     Logger.debug("API Key ID: #{inspect(api_key_id)}")
 
-    config = Application.get_env(:hiveforge_controller, HiveforgeController.ApiKeyController)
-    master_key = config[:masterkey]
+    master_key = get_master_key()
     master_key_hash = Common.hash_key(master_key)
 
+    Logger.debug("Master Key Hash: #{inspect(master_key_hash)}")
+
     cond do
-      master_key_hash == api_key_id ->
+      Common.verify_key(master_key, api_key_id) ->
         Logger.debug("Matched with Master Key")
         handle_challenge_request(conn, api_key_id)
 
@@ -80,15 +83,17 @@ defmodule HiveforgeController.AuthController do
     stored_challenge = get_stored_challenge(api_key_id)
     Logger.debug("Stored Challenge: #{inspect(stored_challenge)}")
 
-    config = Application.get_env(:hiveforge_controller, HiveforgeController.ApiKeyController)
-    master_key_hash = Common.hash_key(config[:masterkey])
+    master_key = get_master_key()
+    master_key_hash = Common.hash_key(master_key)
+
+    Logger.debug("Master Key Hash: #{inspect(master_key_hash)}")
 
     try do
       cond do
         master_key_hash == api_key_id ->
           Logger.debug("Verifying Master Key challenge")
 
-          if verify_challenge_response(stored_challenge, challenge_response, config[:masterkey]) do
+          if Common.verify_challenge_response(stored_challenge, challenge_response, master_key) do
             token = JWTAuth.generate_token(%{type: "masterkey", key_hash: master_key_hash})
             json_response(conn, 200, %{token: token})
           else
@@ -101,9 +106,15 @@ defmodule HiveforgeController.AuthController do
 
           case ApiKeyService.get_api_key_by_hash(api_key_id) do
             {:ok, api_key} ->
+              Logger.debug("API Key found: #{inspect(api_key, pretty: true)}")
               case ApiKeyService.authorize_action(%{"type" => api_key.type}, :verify_challenge) do
                 :ok ->
-                  if verify_challenge_response(stored_challenge, challenge_response, api_key.key) do
+                  Logger.debug("API Key authorized for challenge verification")
+                  Logger.debug("Stored challenge: #{stored_challenge}")
+                  Logger.debug("Challenge response: #{challenge_response}")
+                  Logger.debug("API Key: #{inspect(api_key, pretty: true)}")
+
+                  if Common.verify_challenge_response(stored_challenge, challenge_response, api_key.key) do
                     token = JWTAuth.generate_token(api_key)
                     json_response(conn, 200, %{token: token})
                   else
@@ -129,20 +140,28 @@ defmodule HiveforgeController.AuthController do
     end
   end
 
-  defp verify_challenge_response(challenge, response, key) do
-    Logger.debug("Verifying challenge response")
-    Logger.debug("Challenge: #{inspect(challenge)}")
-    Logger.debug("Response: #{inspect(response)}")
-    Logger.debug("Key (first 8 chars): #{String.slice(key, 0, 8)}")
-
-    expected_response = :crypto.hash(:sha256, challenge <> key) |> Base.encode16(case: :lower)
-    Logger.debug("Expected Response: #{inspect(expected_response)}")
-
-    result = Plug.Crypto.secure_compare(response, expected_response)
-    Logger.debug("Verification result: #{result}")
-
-    result
+  defp get_master_key do
+    case :persistent_term.get(@master_key_term, :not_found) do
+      :not_found ->
+        Logger.warn("Master key not found in persistent term. Initializing...")
+        init_master_key()
+      key -> key
+    end
   end
+
+  def init_master_key do
+    config = Application.get_env(:hiveforge_controller, HiveforgeController.ApiKeyController)
+    case config[:masterkey] do
+      nil ->
+        Logger.error("Master key not found in configuration")
+        raise "Master key is not configured"
+      master_key ->
+        :persistent_term.put(@master_key_term, master_key)
+        Logger.info("Master key initialized in persistent term")
+        master_key
+    end
+  end
+
 
   defp json_response(conn, status, data) do
     conn

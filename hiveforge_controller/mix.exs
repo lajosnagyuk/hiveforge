@@ -38,7 +38,8 @@ defmodule HiveforgeController.MixProject do
       {:ecto, "~> 3.11"},
       {:postgrex, "~> 0.18"},
       {:ecto_sql, "~> 3.11"},
-      {:joken, "~> 2.6"}
+      {:joken, "~> 2.6"},
+      {:argon2_elixir, "~> 4.0"}
     ]
   end
 end

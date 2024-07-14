@@ -1,28 +1,44 @@
 defmodule HiveforgeController.ProtectedRouter do
+  import HiveforgeController.JWTAuthPlug
   use Plug.Router
+  require Logger
 
-  plug HiveForgeController.JWTAuthPlug
-  plug :match
-  plug :dispatch
+  def log_headers(conn, _opts) do
+    headers = conn.req_headers |> Enum.map(fn {k, v} -> "#{k}: #{v}" end) |> Enum.join("\n")
+    Logger.info("Headers in ProtectedRouter:\n#{headers}")
+    conn
+  end
+
+  plug(:log_headers)
+  plug(HiveforgeController.JWTAuthPlug)
+  plug(:match)
+  plug(:dispatch)
 
   # Jobs
-  get("/api/v1/jobs", do: HiveforgeController.JobController.call(conn, action: :list_jobs))
-  get("/api/v1/jobs/:id", do: HiveforgeController.JobController.call(conn, action: :get_job))
-  post("/api/v1/jobs", do: HiveforgeController.JobController.call(conn, action: :create_job))
+  get("/jobs", do: HiveforgeController.JobController.call(conn, action: :list_jobs))
+  get("/jobs/:id", do: HiveforgeController.JobController.call(conn, action: :get_job))
+  post("/jobs", do: HiveforgeController.JobController.call(conn, action: :create_job))
 
   # Agents
-  post("/api/v1/agents/register", do: HiveforgeController.AgentController.call(conn, action: :register))
-  post("/api/v1/agents/heartbeat", do: HiveforgeController.AgentController.call(conn, action: :heartbeat))
+  post("/agents/register",
+    do: HiveforgeController.AgentController.call(conn, action: :register)
+  )
 
-  get("/api/v1/agents/:id", do: HiveforgeController.AgentController.call(conn, action: :get_agent))
-  get("/api/v1/agents", do: HiveforgeController.AgentController.call(conn, action: :list_agents))
+  post("/agents/heartbeat",
+    do: HiveforgeController.AgentController.call(conn, action: :heartbeat)
+  )
+
+  get("/agents/:id",
+    do: HiveforgeController.AgentController.call(conn, action: :get_agent)
+  )
+
+  get("/agents", do: HiveforgeController.AgentController.call(conn, action: :list_agents))
 
   # API Keys
-  post("/api/v1/api_keys/generate",
+  post("/api_keys/generate",
     do: HiveforgeController.ApiKeyController.call(conn, action: :generate_key)
   )
 
   # Good Bye Path
   match(_, do: send_resp(conn, 404, "Not Found"))
-
 end

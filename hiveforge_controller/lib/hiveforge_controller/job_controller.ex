@@ -13,9 +13,11 @@ defmodule HiveforgeController.JobController do
 
   def create_job(conn, params) do
     claims = conn.assigns[:current_user]
+
     with {:ok, decoded} <- decode_body(params),
          {:ok, job} <- JobService.create_job(decoded, claims) do
-      Logger.info("New job created - ID: #{job.id}, API Key Hash: #{_auth_key.key_hash}")
+      Logger.info("New job created - ID: #{job.id}, API Key Hash: #{claims.kid}")
+
       conn
       |> put_status(:created)
       |> put_resp_content_type("application/json")
@@ -23,15 +25,20 @@ defmodule HiveforgeController.JobController do
     else
       {:error, :invalid_encoding} ->
         error_response(conn, :bad_request, "Invalid base64 encoding")
+
       {:error, :invalid_json} ->
         error_response(conn, :bad_request, "Invalid JSON")
+
       {:error, :invalid_attributes, changeset} ->
         errors = Ecto.Changeset.traverse_errors(changeset, fn {msg, _opts} -> msg end)
         error_response(conn, :unprocessable_entity, %{errors: errors})
+
       {:error, :unauthorized, reason} ->
         error_response(conn, :unauthorized, "Not authorized to create job: #{reason}")
+
       {:error, :database_error, reason} ->
         error_response(conn, :internal_server_error, "Database error: #{reason}")
+
       {:error, :unknown_error, reason} ->
         error_response(conn, :internal_server_error, "An unexpected error occurred: #{reason}")
     end
@@ -57,18 +64,23 @@ defmodule HiveforgeController.JobController do
 
   def get_job(conn, %{"id" => id}) do
     claims = conn.assigns[:current_user]
+
     case JobService.get_job(id, claims) do
       {:ok, job} ->
         conn
         |> put_status(:ok)
         |> put_resp_content_type("application/json")
         |> json_response(job)
+
       {:error, :not_found, reason} ->
         error_response(conn, :not_found, reason)
+
       {:error, :unauthorized, reason} ->
         error_response(conn, :unauthorized, "Not authorized to get job: #{reason}")
+
       {:error, :database_error, reason} ->
         error_response(conn, :internal_server_error, "Database error: #{reason}")
+
       {:error, :unknown_error, reason} ->
         error_response(conn, :internal_server_error, "An unexpected error occurred: #{reason}")
     end
@@ -83,6 +95,7 @@ defmodule HiveforgeController.JobController do
       {:error, %Jason.DecodeError{}} -> {:error, :invalid_json}
     end
   end
+
   defp decode_body(_), do: {:error, :invalid_encoding}
 
   defp json_response(conn, data) do

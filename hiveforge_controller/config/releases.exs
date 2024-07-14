@@ -1,6 +1,5 @@
 import Config
 
-# Configuration for the HiveforgeController Repo
 config :hiveforge_controller, HiveforgeController.Repo,
   username: System.get_env("DB_USERNAME"),
   password: System.get_env("DB_PASSWORD"),
@@ -14,9 +13,14 @@ config :hiveforge_controller, HiveforgeController.Repo,
     verify: :verify_none
   ]
 
-# Configuration to specify the ecto repos
 config :hiveforge_controller,
   ecto_repos: [HiveforgeController.Repo]
+
+config :hiveforge_controller, HiveforgeController.AgentController,
+  masterkey: System.get_env("HIVEFORGE_MASTER_KEY")
+
+config :hiveforge_controller, HiveforgeController.JobController,
+  masterkey: System.get_env("HIVEFORGE_MASTER_KEY")
 
 config :hiveforge_controller, HiveforgeController.ApiKeyController,
   masterkey: System.get_env("HIVEFORGE_MASTER_KEY")

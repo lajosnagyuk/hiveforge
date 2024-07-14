@@ -3,9 +3,10 @@ package main
 import (
 	"bytes"
 	// "crypto/hmac"
-	// "crypto/sha256"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
@@ -127,25 +128,22 @@ func authenticateAndGetJWT(config Config) (*JWT, error) {
 
     if config.MasterKey != "" {
         keyToUse = config.MasterKey
-        keyHash = HashKey(config.MasterKey)
+        keyHash = hashKey(config.MasterKey)
     } else if config.ApiKey != "" {
         keyToUse = config.ApiKey
-        keyHash = HashKey(config.ApiKey)
+        keyHash = hashKey(config.ApiKey)
     } else {
         return nil, errors.New("neither master key nor API key is set")
     }
 
-    fmt.Printf("DEBUG: Full Key Hash: %s\n", keyHash)
-    fmt.Printf("DEBUG: Sending Key ID: %s\n", keyHash[:8])
+	// Step 1: Request a challenge
+	challengeURL := fmt.Sprintf("http://%s:%d/api/v1/auth/challenge", config.ApiEndpoint, config.Port)
+	req, err := http.NewRequest("GET", challengeURL, nil)
+	if err != nil {
+		return nil, err
+	}
 
-    // Step 1: Request a challenge
-    challengeURL := fmt.Sprintf("http://%s:%d/api/v1/auth/challenge", config.ApiEndpoint, config.Port)
-    req, err := http.NewRequest("GET", challengeURL, nil)
-    if err != nil {
-        return nil, err
-    }
-
-    req.Header.Set("x-api-key-id", keyHash[:8]) // Send first 8 characters of the hash
+	req.Header.Set("x-api-key-id", keyHash) // Send the full Argon2 hash
 
     fmt.Printf("DEBUG: Sending request to: %s\n", challengeURL)
     fmt.Printf("DEBUG: Request headers: %v\n", req.Header)
@@ -171,8 +169,8 @@ func authenticateAndGetJWT(config Config) (*JWT, error) {
     }
 
     // Step 2: Solve the challenge
-    challengeResponse := HashKey(challengeResp.Challenge + keyToUse)
-    fmt.Printf("DEBUG: Challenge: %s\n", challengeResp.Challenge)
+	challengeResponse := solveChallenge(challengeResp.Challenge, keyToUse)
+	fmt.Printf("DEBUG: Challenge: %s\n", challengeResp.Challenge)
     fmt.Printf("DEBUG: Challenge Response: %s\n", challengeResponse)
 
     // Only use the first 8 characters of the challenge response
@@ -180,14 +178,14 @@ func authenticateAndGetJWT(config Config) (*JWT, error) {
     fmt.Printf("DEBUG: Short Challenge Response: %s\n", shortChallengeResponse)
 
     // Step 3: Submit the challenge response
-    authURL := fmt.Sprintf("http://%s:%d/api/v1/auth/verify", config.ApiEndpoint, config.Port)
-    challengeResponseJSON, _ := json.Marshal(map[string]string{"challenge_response": shortChallengeResponse})
-    authReq, err := http.NewRequest("POST", authURL, bytes.NewBuffer(challengeResponseJSON))
-    if err != nil {
-        return nil, err
-    }
-    authReq.Header.Set("x-api-key-id", keyHash[:8])
-    authReq.Header.Set("Content-Type", "application/json")
+	authURL := fmt.Sprintf("http://%s:%d/api/v1/auth/verify", config.ApiEndpoint, config.Port)
+	challengeResponseJSON, _ := json.Marshal(map[string]string{"challenge_response": challengeResponse})
+	authReq, err := http.NewRequest("POST", authURL, bytes.NewBuffer(challengeResponseJSON))
+	if err != nil {
+		return nil, err
+	}
+	authReq.Header.Set("x-api-key-id", keyHash)
+	authReq.Header.Set("Content-Type", "application/json")
 
     fmt.Printf("DEBUG: Sending verification request to: %s\n", authURL)
     fmt.Printf("DEBUG: Verification request headers: %v\n", authReq.Header)
@@ -245,6 +243,12 @@ func authenticateAndGetJWT(config Config) (*JWT, error) {
     }
 
     return jwt, nil
+}
+
+func solveChallenge(challenge, key string) string {
+	// Use SHA-256 for the challenge response (unchanged)
+	hash := sha256.Sum256([]byte(challenge + key))
+	return hex.EncodeToString(hash[:])
 }
 
 func storeJWT(jwt *JWT) error {
@@ -447,6 +451,7 @@ func displayApiKeys(apiKeys []ApiKey) {
 func getJobs(apiEndpoint string, port int, debug bool, jwt *JWT) ([]Job, error) {
     url := fmt.Sprintf("http://%s:%d/api/v1/jobs", apiEndpoint, port)
     fmt.Printf("Requesting URL: %s\n", url)  // Debug print
+    fmt.Printf("JWT: %s\n", jwt.Token)  // Debug print
     resp, err := makeAuthenticatedRequest(Config{ApiEndpoint: apiEndpoint, Port: port}, jwt, "GET", url, nil)
     if err != nil {
         return nil, fmt.Errorf("HTTP request failed: %v", err)

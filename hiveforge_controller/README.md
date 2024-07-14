@@ -44,7 +44,9 @@ HIVEFORGE_CONTROLLER_CERTFILE=/hiveforge_controller/misc/certificates/test-serve
 HIVEFORGE_CONTROLLER_KEYFILE=/hiveforge_controller/misc/certificates/test-server-key.pem \
 make dev-run
 ```
-
+# Build and push container
+DOCKER_TAG=erlang-27.0-20240623-7 \
+make all
 
 # Release and install Helm Charts
 ```bash

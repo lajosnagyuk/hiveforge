@@ -3,7 +3,7 @@ replicaCount: "1"
 image:
   registry: "quay.io"
   repository: "lajos_nagy/hiveforge-controller"
-  tag: "erlang-27.0-20240707-24"
+  tag: "erlang-27.0-20240713-22"
   pullPolicy: "IfNotPresent"
 
 
@@ -11,7 +11,7 @@ migration:
   image:
     registry: "quay.io"
     repository: "lajos_nagy/hiveforge-database-migrations"
-    tag: "erlang-27.0-20240707-24"
+    tag: "erlang-27.0-20240713-22"
     pullPolicy: "IfNotPresent"
 
 tunables:

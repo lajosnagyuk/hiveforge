@@ -1,13 +1,26 @@
 package main
 
 import (
-    "crypto/sha256"
-    "encoding/hex"
+	"golang.org/x/crypto/argon2"
+	"encoding/base64"
+	"fmt"
+	"math/rand"
 )
 
-// HashKey creates a SHA-256 hash of the input string and returns it as a hexadecimal string
-func HashKey(key string) string {
-    hasher := sha256.New()
-    hasher.Write([]byte(key))
-    return hex.EncodeToString(hasher.Sum(nil))
+func hashKey(key string) string {
+	time := uint32(3)
+	memory := uint32(65536)
+	threads := uint8(4)
+	keyLen := uint32(32)
+
+	salt := make([]byte, 16)
+	rand.Read(salt)
+	hash := argon2.IDKey([]byte(key), salt, time, memory, threads, keyLen)
+
+	encodedHash := fmt.Sprintf("$argon2id$v=%d$m=%d,t=%d,p=%d$%s$%s",
+		argon2.Version, memory, time, threads,
+		base64.RawStdEncoding.EncodeToString(nil), // empty salt
+		base64.RawStdEncoding.EncodeToString(hash))
+
+	return encodedHash
 }

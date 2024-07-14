@@ -83,6 +83,8 @@ func loadConfig() (Config, *JWT, error) {
     jwtPaths = append(jwtPaths, homeJWTPath)
 
     var config Config
+
+
     var jwt JWT
 
     for _, path := range configPaths {
@@ -100,6 +102,9 @@ func loadConfig() (Config, *JWT, error) {
             break
         }
     }
+
+    fmt.Printf("Debug: Loaded config - ApiKey set: %v, MasterKey set: %v\n",
+               config.ApiKey != "", config.MasterKey != "")
 
     for _, path := range jwtPaths {
         if _, err := os.Stat(path); err == nil {
@@ -121,18 +126,21 @@ func loadConfig() (Config, *JWT, error) {
 }
 
 func authenticateAndGetJWT(config Config) (*JWT, error) {
-	var keyToUse string
-	var keyHash string
+    fmt.Printf("Debug: MasterKey set: %v, ApiKey set: %v\n", config.MasterKey != "", config.ApiKey != "")
+    if config.MasterKey == "" && config.ApiKey == "" {
+        return nil, errors.New("neither master key nor API key is set")
+    }
 
-	if config.MasterKey != "" {
-		keyToUse = config.MasterKey
-		keyHash = hashKey(config.MasterKey)
-	} else if config.ApiKey != "" {
-		keyToUse = config.ApiKey
-		keyHash = hashKey(config.ApiKey)
-	} else {
-		return nil, errors.New("neither master key nor API key is set")
-	}
+    var keyToUse string
+    var keyHash string
+
+    if config.MasterKey != "" {
+        keyToUse = config.MasterKey
+        keyHash = hashKey(config.MasterKey)
+    } else {
+        keyToUse = config.ApiKey
+        keyHash = hashKey(config.ApiKey)
+    }
 
 	// Step 1: Request a challenge
 	challengeURL := fmt.Sprintf("http://%s:%d/api/v1/auth/challenge", config.ApiEndpoint, config.Port)
@@ -351,11 +359,20 @@ func makeAuthenticatedRequest(config Config, jwt *JWT, method, url string, body 
         if jwt == nil {
             return true
         }
-        // Check if we're more than 2/3 through the validity duration
-        return time.Now().After(jwt.ExpiresAt.Add(-1 * jwt.ExpiresAt.Sub(jwt.IssuedAt) / 3))
+        now := time.Now()
+        if now.After(jwt.ExpiresAt) {
+            return true
+        }
+        validityDuration := jwt.ExpiresAt.Sub(jwt.IssuedAt)
+        twoThirdsDuration := validityDuration * 2 / 3
+        return now.After(jwt.IssuedAt.Add(twoThirdsDuration))
     }
 
     if needsRefresh(jwt) {
+        if config.Debug {
+            fmt.Printf("Debug: Refreshing JWT - ApiKey set: %v, MasterKey set: %v\n",
+                       config.ApiKey != "", config.MasterKey != "")
+        }
         newJWT, err := authenticateAndGetJWT(config)
         if err != nil {
             return nil, fmt.Errorf("failed to refresh JWT: %w", err)
@@ -365,9 +382,10 @@ func makeAuthenticatedRequest(config Config, jwt *JWT, method, url string, body 
             return nil, fmt.Errorf("failed to store refreshed JWT: %w", err)
         }
         if config.Debug {
-            fmt.Println("JWT refreshed proactively")
+            fmt.Println("JWT refreshed successfully")
         }
     }
+
 
     req, err := http.NewRequest(method, url, bytes.NewBuffer(body))
     if err != nil {
@@ -385,10 +403,10 @@ func makeAuthenticatedRequest(config Config, jwt *JWT, method, url string, body 
     return client.Do(req)
 }
 
-func listApiKeys(apiEndpoint string, port int, jwt *JWT) ([]ApiKey, error) {
-	url := fmt.Sprintf("http://%s:%d/api/v1/api_keys", apiEndpoint, port)
+func listApiKeys(config Config, jwt *JWT) ([]ApiKey, error) {
+	url := fmt.Sprintf("http://%s:%d/api/v1/api_keys", config.ApiEndpoint, config.Port)
 
-	resp, err := makeAuthenticatedRequest(Config{ApiEndpoint: apiEndpoint, Port: port}, jwt, "GET", url, nil)
+	resp, err := makeAuthenticatedRequest(config, jwt, "GET", url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to make authenticated request: %w", err)
 	}
@@ -442,11 +460,14 @@ func displayApiKeys(apiKeys []ApiKey) {
 }
 
 // getJobs retrieves all jobs from the API
-func getJobs(apiEndpoint string, port int, debug bool, jwt *JWT) ([]Job, error) {
-    url := fmt.Sprintf("http://%s:%d/api/v1/jobs", apiEndpoint, port)
-    fmt.Printf("Requesting URL: %s\n", url)  // Debug print
-    fmt.Printf("JWT: %s\n", jwt.Token)  // Debug print
-    resp, err := makeAuthenticatedRequest(Config{ApiEndpoint: apiEndpoint, Port: port}, jwt, "GET", url, nil)
+func getJobs(config Config, jwt *JWT) ([]Job, error) {
+    url := fmt.Sprintf("http://%s:%d/api/v1/jobs", config.ApiEndpoint, config.Port)
+    fmt.Printf("Requesting URL: %s\n", url)
+    if config.Debug {
+        fmt.Printf("Debug: Making request - ApiKey set: %v, MasterKey set: %v\n",
+                   config.ApiKey != "", config.MasterKey != "")
+    }
+    resp, err := makeAuthenticatedRequest(config, jwt, "GET", url, nil)
     if err != nil {
         return nil, fmt.Errorf("HTTP request failed: %v", err)
     }
@@ -460,7 +481,7 @@ func getJobs(apiEndpoint string, port int, debug bool, jwt *JWT) ([]Job, error) 
     }
 
     // Print the raw API response
-    if debug {
+    if config.Debug {
 	    fmt.Println("Raw API response:")
 	    fmt.Println(string(body))
     }
@@ -478,10 +499,10 @@ func getJobs(apiEndpoint string, port int, debug bool, jwt *JWT) ([]Job, error) 
     return jobs, nil
 }
 
-func describeJob(apiEndpoint string, port int, debug bool, id string, jwt *JWT) error {
-    url := fmt.Sprintf("http://%s:%d/api/v1/jobs/%s", apiEndpoint, port, id)
+func describeJob(config Config, id string, jwt *JWT) error {
+    url := fmt.Sprintf("http://%s:%d/api/v1/jobs/%s", config.ApiEndpoint, config.Port, id)
     fmt.Printf("Requesting URL: %s\n", url)
-    resp, err := makeAuthenticatedRequest(Config{ApiEndpoint: apiEndpoint, Port: port}, jwt, "GET", url, nil)
+    resp, err := makeAuthenticatedRequest(config, jwt, "GET", url, nil)
 
     if err != nil {
         return fmt.Errorf("HTTP request failed: %v", err)
@@ -572,7 +593,7 @@ func printRow(row []string, widths []int) {
 	fmt.Println()
 }
 
-func createJob(apiEndpoint string, port int, debug bool, jsonFilePath string, jwt *JWT) error {
+func createJob(config Config, jsonFilePath string, jwt *JWT) error {
 	// Read the JSON file
 	jsonData, err := os.ReadFile(jsonFilePath)
 	if err != nil {
@@ -589,9 +610,9 @@ func createJob(apiEndpoint string, port int, debug bool, jsonFilePath string, jw
 	encodedJob := base64.StdEncoding.EncodeToString(jsonData)
 	requestBody := []byte(fmt.Sprintf(`{"body":"%s"}`, encodedJob))
 
-	url := fmt.Sprintf("http://%s:%d/api/v1/jobs", apiEndpoint, port)
+	url := fmt.Sprintf("http://%s:%d/api/v1/jobs", config.ApiEndpoint, config.Port)
 
-	resp, err := makeAuthenticatedRequest(Config{ApiEndpoint: apiEndpoint, Port: port}, jwt, "POST", url, requestBody)
+	resp, err := makeAuthenticatedRequest(config, jwt, "POST", url, requestBody)
 	if err != nil {
 		return fmt.Errorf("failed to make authenticated request: %w", err)
 	}
@@ -602,7 +623,7 @@ func createJob(apiEndpoint string, port int, debug bool, jsonFilePath string, jw
 		return fmt.Errorf("failed to read response body: %w", err)
 	}
 
-	if debug {
+	if config.Debug {
 		fmt.Println("Raw API response:")
 		fmt.Println(string(body))
 	}
@@ -730,6 +751,11 @@ func main() {
         fmt.Println("Debug mode is enabled")
     }
 
+    if config.Debug {
+        fmt.Printf("Debug: Config loaded - ApiKey set: %v, MasterKey set: %v\n",
+                   config.ApiKey != "", config.MasterKey != "")
+    }
+
     if config.MasterKey == "" && config.ApiKey == "" {
         fmt.Println("Error: Neither master key nor API key is set in the configuration. At least one is required.")
         return
@@ -775,7 +801,7 @@ func handleGet(args []string, config Config, jwt *JWT) {
     switch args[0] {
     case "jobs":
         fmt.Println("Fetching jobs...")
-        jobs, err := getJobs(config.ApiEndpoint, config.Port, config.Debug, jwt)
+        jobs, err := getJobs(config, jwt)
         if err != nil {
             fmt.Printf("Error fetching jobs: %v\n", err)
             return
@@ -812,7 +838,7 @@ func handleCreate(args []string, config Config, jwt *JWT) {
 
 	if args[0] == "job" {
 		jsonFilePath := args[1]
-		err := createJob(config.ApiEndpoint, config.Port, config.Debug, jsonFilePath, jwt)
+		err := createJob(config, jsonFilePath, jwt)
 		if err != nil {
 			fmt.Println("Error creating job:", err)
 		}
@@ -830,7 +856,7 @@ func handleDescribe(args []string, config Config, jwt *JWT) {
     switch args[0] {
     case "job":
         jobID := args[1]
-        err := describeJob(config.ApiEndpoint, config.Port, config.Debug, jobID, jwt)
+        err := describeJob(config, jobID, jwt)
         if err != nil {
             fmt.Printf("Error describing job: %v\n", err)
         }
@@ -897,7 +923,7 @@ func handleGenerateKey(args []string, config Config, jwt *JWT) {
 }
 
 func handleListKeys(config Config, jwt *JWT) {
-    apiKeys, err := listApiKeys(config.ApiEndpoint, config.Port, jwt)
+    apiKeys, err := listApiKeys(config, jwt)
 	if err != nil {
 		fmt.Printf("Error listing API keys: %v\n", err)
 		return

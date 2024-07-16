@@ -26,7 +26,8 @@ defmodule HiveforgeAgent.MixProject do
       {:jason, "~> 1.4"},
       {:quantum, "~> 3.5"},
       {:hackney, "~> 1.20"},
-      {:ssl_verify_fun, "~> 1.1"}
+      {:ssl_verify_fun, "~> 1.1"},
+      {:b3, "~> 0.1"}
     ]
   end
 end

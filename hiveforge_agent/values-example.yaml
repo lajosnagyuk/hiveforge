@@ -1,10 +1,10 @@
 hiveforge:
-  sharedKey: ""
-replicaCount: "3"
+    agentKey: ""
+replicaCount: "1"
 image:
   registry: "quay.io"
   repository: "lajos_nagy/hiveforge-agent"
-  tag: "20240706-8"
+  tag: "20240714-7"
   pullPolicy: "IfNotPresent"
 
 tunables:
@@ -12,6 +12,7 @@ tunables:
   certificates:
     cacertfileMountEnabled: "false"
     cacertfile: # base64 encoded ca-cert.pem file
+
 
 env:
   - name: MIX_ENV

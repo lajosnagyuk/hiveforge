@@ -8,7 +8,8 @@ defmodule HiveforgeAgent.Application do
 
     children = [
       {HiveforgeAgent.Scheduler, []},
-      HiveforgeAgent.Heartbeat
+      HiveforgeAgent.Heartbeat,
+      HiveforgeAgent.AgentIdentity
     ]
 
     opts = [strategy: :one_for_one, name: HiveforgeAgent.Supervisor]

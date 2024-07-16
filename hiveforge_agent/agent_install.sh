@@ -1,38 +1,38 @@
 #!/bin/bash
 
 # Set variables
-CONTROLLER_NAMESPACE="hiveforge-controller"
-CONTROLLER_SECRET_NAME="hiveforge-controller-master-key"
+#if apikey is not set set it to empty
+API_KEY=${1:-""}
 AGENT_NAMESPACE="hiveforge-agent"
-AGENT_SECRET_NAME="hiveforge-agent-shared-key"
+AGENT_SECRET_NAME="hiveforge-agent-key"
 
-# Function to generate shared key
-generate_shared_key() {
-    local master_key=$1
-    echo -n "SHARED_KEY_DERIVATION" | openssl dgst -sha256 -hmac "$master_key" -binary | base64
-}
-
-# Retrieve the master key from the controller's secret
-MASTER_KEY=$(kubectl get secret -n ${CONTROLLER_NAMESPACE} ${CONTROLLER_SECRET_NAME} -o jsonpath="{.data.master-key}" | base64 --decode)
-if [ -z "$MASTER_KEY" ]; then
-    echo "Error: Failed to retrieve the master key from the controller secret."
-    exit 1
-fi
-
-# Check if the shared key secret already exists
-if kubectl get secret -n ${AGENT_NAMESPACE} ${AGENT_SECRET_NAME} &> /dev/null; then
-    echo "Using existing shared key from secret."
-    SHARED_KEY=$(kubectl get secret -n ${AGENT_NAMESPACE} ${AGENT_SECRET_NAME} -o jsonpath="{.data.shared-key}" | base64 --decode)
+# Check if API_KEY is empty, if so, check for existing secret
+if [ -z "$API_KEY" ]; then
+    echo "API_KEY is not set. Checking for existing secret..."
+    if kubectl get secret -n ${AGENT_NAMESPACE} ${AGENT_SECRET_NAME} &>/dev/null; then
+        AGENT_KEY=$(kubectl get secret -n ${AGENT_NAMESPACE} ${AGENT_SECRET_NAME} -o jsonpath='{.data.agentKey}' | base64 --decode)
+        if [ -z "$AGENT_KEY" ]; then
+            echo "Existing secret found, but it's empty. Please provide an API_KEY. Usage: ./agent-install.sh <API_KEY>"
+            exit 1
+        else
+            echo "Using existing secret."
+        fi
+    else
+        echo "No existing secret found. Please provide an API_KEY. Usage: ./agent-install.sh <API_KEY>"
+        exit 1
+    fi
 else
-    echo "Generating new shared key."
-    SHARED_KEY=$(generate_shared_key "$MASTER_KEY")
+    echo "API_KEY is set. Creating/updating secret..."
+    # this passes in the key to the helm chart which handles the secret creation
+    AGENT_KEY=$API_KEY
 fi
+
 
 # Package Helm chart
 helm package Helm/hiveforge_agent
 
 # Get chart version
-hiveforge_agent_chart_version=$(cat Helm/hiveforge_agent/Chart.yaml | grep version | awk '{print $2}')
+hiveforge_agent_chart_version=$(awk '/version:/ {print $2; exit}' Helm/hiveforge_agent/Chart.yaml)
 
 # Install or upgrade Helm chart
 helm upgrade --install hiveforge-agent \
@@ -40,10 +40,12 @@ helm upgrade --install hiveforge-agent \
     --create-namespace \
     hiveforge-agent-${hiveforge_agent_chart_version}.tgz \
     --values values-example.yaml \
-    --set hiveforge.sharedKey=$SHARED_KEY
+    --set hiveforge.agentKey=$AGENT_KEY
 
 # Clean up
-unset MASTER_KEY
-unset SHARED_KEY
+rm hiveforge-agent-${hiveforge_agent_chart_version}.tgz
+unset API_KEY
+unset AGENT_NAMESPACE
+unset AGENT_SECRET_NAME
 
 echo "Deployment complete."

@@ -19,11 +19,11 @@ spec:
           image: "{{ .Values.image.registry }}/{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           env:
-            - name: HIVEFORGE_SHARED_KEY
+            - name: HIVEFORGE_AGENT_KEY
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Release.Name }}-shared-key
-                  key: shared-key
+                  name: {{ .Release.Name }}-key
+                  key: agentKey
             {{- range .Values.env }}
             - name: {{ .name }}
               value: {{ .value | quote }}

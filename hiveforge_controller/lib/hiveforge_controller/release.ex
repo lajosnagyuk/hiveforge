@@ -8,7 +8,6 @@ defmodule HiveforgeController.Release do
     for repo <- repos() do
       IO.inspect(repo.config(), label: "Repo Config in migrate")
 
-      # Ensure the repo is started
       ensure_all_started()
       start_repo(repo)
 
@@ -16,18 +15,21 @@ defmodule HiveforgeController.Release do
       migration_files = Path.wildcard(priv_path_for(repo, "migrations") <> "/*.exs")
       IO.inspect(migration_files, label: "Found migration files")
 
-      {:ok, versions, _} =
-        Ecto.Migrator.with_repo(repo, fn repo ->
-          IO.puts("Running migrations for #{inspect(repo)}")
-          migrations = Ecto.Migrator.migrations(repo)
-          IO.inspect(migrations, label: "Migrations available before run")
-          result = Ecto.Migrator.run(repo, :up, all: true)
-          IO.inspect(result, label: "Migrations result")
-          result
-        end)
-
-      IO.puts("Migration completed for #{inspect(repo)}")
-      IO.puts("Applied versions: #{inspect(versions)}")
+      case Ecto.Migrator.with_repo(repo, fn repo ->
+        IO.puts("Running migrations for #{inspect(repo)}")
+        migrations = Ecto.Migrator.migrations(repo)
+        IO.inspect(migrations, label: "Migrations available before run")
+        result = Ecto.Migrator.run(repo, :up, all: true)
+        IO.inspect(result, label: "Migrations result")
+        result
+      end) do
+        {:ok, versions, _} ->
+          IO.puts("Migration completed for #{inspect(repo)}")
+          IO.puts("Applied versions: #{inspect(versions)}")
+        {:error, reason} ->
+          IO.puts("Migration failed for #{inspect(repo)}: #{inspect(reason)}")
+          exit(1)
+      end
     end
   end
 
@@ -38,8 +40,12 @@ defmodule HiveforgeController.Release do
     for repo <- repos() do
       IO.inspect(repo.config(), label: "Repo Config in create_db")
       ensure_all_started()
-      :ok = ensure_repo_created(repo)
-      IO.puts("Database created for #{inspect(repo)}")
+      case ensure_repo_created(repo) do
+        :ok -> IO.puts("Database created for #{inspect(repo)}")
+        {:error, reason} ->
+          IO.puts("Database creation failed for #{inspect(repo)}: #{inspect(reason)}")
+          exit(1)
+      end
     end
   end
 

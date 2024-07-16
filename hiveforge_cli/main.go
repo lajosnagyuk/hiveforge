@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	// "crypto/hmac"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -12,7 +13,15 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"time"
+	"github.com/golang-jwt/jwt/v4"
 )
+
+type JWT struct {
+    Token     string    `json:"token"`
+    ExpiresAt time.Time `json:"expires_at"`
+    IssuedAt  time.Time `json:"issued_at"`
+}
 
 // Config represents the application configuration
 type Config struct {
@@ -20,6 +29,15 @@ type Config struct {
 	Port        int    `json:"port"`
 	CacertFile  string `json:"cacert_file"`
 	Debug       bool   `json:"debug"`
+	ApiKey      string `json:"api_key"`
+	MasterKey   string `json:"master_key"`
+}
+
+type ApiKey struct {
+	Key 	string `json:"key"`
+	Type    string `json:"type"`
+	Name    string `json:"name"`
+	Description string `json:"description"`
 }
 
 // Job represents a job retrieved from the API
@@ -45,45 +63,411 @@ type Agent struct {
 }
 
 // loadConfig loads the configuration from a file
-func loadConfig() (Config, error) {
-	configPaths := []string{
-		"config.json",
-	}
+func loadConfig() (Config, *JWT, error) {
+    configPaths := []string{
+        "config.json",
+    }
 
-	user, err := user.Current()
-	if err != nil {
-		return Config{}, err
-	}
+    jwtPaths := []string{
+        "jwt.json",
+    }
 
-	homeConfigPath := filepath.Join(user.HomeDir, ".hiveforge", "config.json")
-	configPaths = append(configPaths, homeConfigPath)
+    user, err := user.Current()
+    if err != nil {
+        return Config{}, nil, err
+    }
 
-	for _, path := range configPaths {
-		if _, err := os.Stat(path); err == nil {
-			file, err := os.ReadFile(path)
-			if err != nil {
-				return Config{}, err
-			}
+    homeConfigPath := filepath.Join(user.HomeDir, ".hiveforge", "config.json")
+    homeJWTPath := filepath.Join(user.HomeDir, ".hiveforge", "jwt.json")
+    configPaths = append(configPaths, homeConfigPath)
+    jwtPaths = append(jwtPaths, homeJWTPath)
 
-			var config Config
-			err = json.Unmarshal(file, &config)
-			if err != nil {
-				return Config{}, err
-			}
+    var config Config
 
-			return config, nil
-		}
-	}
 
-	return Config{}, errors.New("config file not found in current directory or ~/.hiveforge/")
+    var jwt JWT
+
+    for _, path := range configPaths {
+        if _, err := os.Stat(path); err == nil {
+            file, err := os.ReadFile(path)
+            if err != nil {
+                return Config{}, nil, err
+            }
+
+            err = json.Unmarshal(file, &config)
+            if err != nil {
+                return Config{}, nil, err
+            }
+
+            break
+        }
+    }
+
+    fmt.Printf("Debug: Loaded config - ApiKey set: %v, MasterKey set: %v\n",
+               config.ApiKey != "", config.MasterKey != "")
+
+    for _, path := range jwtPaths {
+        if _, err := os.Stat(path); err == nil {
+            file, err := os.ReadFile(path)
+            if err != nil {
+                return config, nil, err
+            }
+
+            err = json.Unmarshal(file, &jwt)
+            if err != nil {
+                return config, nil, err
+            }
+
+            return config, &jwt, nil
+        }
+    }
+
+    return config, nil, nil
 }
 
-// getJobs retrieves jobs from the API
-func getJobs(config Config) ([]Job, error) {
-    url := fmt.Sprintf("http://%s:%d/api/v1/jobs", config.ApiEndpoint, config.Port)
-    fmt.Printf("Requesting URL: %s\n", url)  // Debug print
+func authenticateAndGetJWT(config Config) (*JWT, error) {
+    fmt.Printf("Debug: MasterKey set: %v, ApiKey set: %v\n", config.MasterKey != "", config.ApiKey != "")
+    if config.MasterKey == "" && config.ApiKey == "" {
+        return nil, errors.New("neither master key nor API key is set")
+    }
 
-    resp, err := http.Get(url)
+    var keyToUse string
+    var keyHash string
+
+    if config.MasterKey != "" {
+        keyToUse = config.MasterKey
+        keyHash = hashKey(config.MasterKey)
+    } else {
+        keyToUse = config.ApiKey
+        keyHash = hashKey(config.ApiKey)
+    }
+
+	// Step 1: Request a challenge
+	challengeURL := fmt.Sprintf("http://%s:%d/api/v1/auth/challenge", config.ApiEndpoint, config.Port)
+	req, err := http.NewRequest("GET", challengeURL, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Set("x-api-key-id", keyHash) // Send the BLAKE3 hash
+
+    fmt.Printf("DEBUG: Sending request to: %s\n", challengeURL)
+    fmt.Printf("DEBUG: Request headers: %v\n", req.Header)
+
+    resp, err := http.DefaultClient.Do(req)
+    if err != nil {
+        return nil, err
+    }
+    defer resp.Body.Close()
+
+    fmt.Printf("DEBUG: Response status: %s\n", resp.Status)
+    fmt.Printf("DEBUG: Response headers: %v\n", resp.Header)
+
+    if resp.StatusCode != http.StatusOK {
+        return nil, fmt.Errorf("failed to get challenge: %s", resp.Status)
+    }
+
+    var challengeResp struct {
+        Challenge string `json:"challenge"`
+    }
+    if err := json.NewDecoder(resp.Body).Decode(&challengeResp); err != nil {
+        return nil, err
+    }
+
+    // Step 2: Solve the challenge
+	challengeResponse := solveChallenge(challengeResp.Challenge, keyToUse)
+	fmt.Printf("DEBUG: Challenge: %s\n", challengeResp.Challenge)
+    fmt.Printf("DEBUG: Challenge Response: %s\n", challengeResponse)
+
+    // Only use the first 8 characters of the challenge response
+    shortChallengeResponse := challengeResponse[:8]
+    fmt.Printf("DEBUG: Short Challenge Response: %s\n", shortChallengeResponse)
+
+    // Step 3: Submit the challenge response
+	authURL := fmt.Sprintf("http://%s:%d/api/v1/auth/verify", config.ApiEndpoint, config.Port)
+	challengeResponseJSON, _ := json.Marshal(map[string]string{"challenge_response": challengeResponse})
+	authReq, err := http.NewRequest("POST", authURL, bytes.NewBuffer(challengeResponseJSON))
+	if err != nil {
+		return nil, err
+	}
+	authReq.Header.Set("x-api-key-id", keyHash)
+	authReq.Header.Set("Content-Type", "application/json")
+
+    fmt.Printf("DEBUG: Sending verification request to: %s\n", authURL)
+    fmt.Printf("DEBUG: Verification request headers: %v\n", authReq.Header)
+    fmt.Printf("DEBUG: Verification request body: %s\n", string(challengeResponseJSON))
+
+
+    authResp, err := http.DefaultClient.Do(authReq)
+    if err != nil {
+        return nil, err
+    }
+    defer authResp.Body.Close()
+
+    fmt.Printf("DEBUG: Verification response status: %s\n", authResp.Status)
+    fmt.Printf("DEBUG: Verification response headers: %v\n", authResp.Header)
+
+    body, _ := io.ReadAll(authResp.Body)
+    fmt.Printf("DEBUG: Verification response body: %s\n", string(body))
+
+    if authResp.StatusCode != http.StatusOK {
+        return nil, fmt.Errorf("authentication failed: %s", authResp.Status)
+    }
+
+    var tokenResponse struct {
+        Token string `json:"token"`
+    }
+    if err := json.NewDecoder(bytes.NewReader(body)).Decode(&tokenResponse); err != nil {
+        return nil, err
+    }
+
+    // Parse the JWT to extract issued and expiration times
+    token, _, err := new(jwt.Parser).ParseUnverified(tokenResponse.Token, jwt.MapClaims{})
+    if err != nil {
+        return nil, fmt.Errorf("failed to parse JWT: %w", err)
+    }
+
+    claims, ok := token.Claims.(jwt.MapClaims)
+    if !ok {
+        return nil, fmt.Errorf("invalid token claims")
+    }
+
+    exp, ok := claims["exp"].(float64)
+    if !ok {
+        return nil, fmt.Errorf("invalid expiration claim")
+    }
+
+    iat, ok := claims["iat"].(float64)
+    if !ok {
+        return nil, fmt.Errorf("invalid issued at claim")
+    }
+
+    jwt := &JWT{
+        Token:     tokenResponse.Token,
+        ExpiresAt: time.Unix(int64(exp), 0),
+        IssuedAt:  time.Unix(int64(iat), 0),
+    }
+
+    return jwt, nil
+}
+
+
+
+func storeJWT(jwt *JWT) error {
+    home, err := os.UserHomeDir()
+    if err != nil {
+        return err
+    }
+
+    jwtDir := filepath.Join(home, ".hiveforge")
+    if err := os.MkdirAll(jwtDir, 0700); err != nil {
+        return err
+    }
+
+    jwtFile := filepath.Join(jwtDir, "jwt.json")
+    file, err := os.Create(jwtFile)
+    if err != nil {
+        return err
+    }
+    defer file.Close()
+
+    return json.NewEncoder(file).Encode(jwt)
+}
+
+func getStoredJWT() (*JWT, error) {
+    home, err := os.UserHomeDir()
+    if err != nil {
+        return nil, err
+    }
+
+    jwtFile := filepath.Join(home, ".hiveforge", "jwt.json")
+    file, err := os.Open(jwtFile)
+    if err != nil {
+        return nil, err
+    }
+    defer file.Close()
+
+    var jwt JWT
+    if err := json.NewDecoder(file).Decode(&jwt); err != nil {
+        return nil, err
+    }
+
+    return &jwt, nil
+}
+// func generateSignature(apiKey, nonce string, body []byte) string {
+// 	transactionKey := hmac.New(sha256.New, []byte(apiKey))
+// 	transactionKey.Write([]byte("TRANSACTION" + nonce))
+
+// 	signature := hmac.New(sha256.New, transactionKey.Sum(nil))
+// 	signature.Write(body)
+
+// 	return base64.StdEncoding.EncodeToString(signature.Sum(nil))
+// }
+
+func generateApiKey(config Config, jwt *JWT, keyType, name, description string) (*ApiKey, error) {
+    url := fmt.Sprintf("http://%s:%d/api/v1/api_keys/generate", config.ApiEndpoint, config.Port)
+
+    requestBody, err := json.Marshal(map[string]string{
+        "type": keyType,
+        "name": name,
+        "description": description,
+    })
+    if err != nil {
+        return nil, err
+    }
+
+    resp, err := makeAuthenticatedRequest(config, jwt, "POST", url, requestBody)
+    if err != nil {
+        return nil, err
+    }
+    defer resp.Body.Close()
+
+    body, err := io.ReadAll(resp.Body)
+    if err != nil {
+        return nil, err
+    }
+
+    if config.Debug {
+        fmt.Printf("Response Status: %s\n", resp.Status)
+        fmt.Printf("Response Headers: %v\n", resp.Header)
+        fmt.Printf("Response Body: %s\n", string(body))
+    }
+
+    if resp.StatusCode != http.StatusCreated {
+        return nil, fmt.Errorf("failed to generate API key: %s", string(body))
+    }
+
+    var apiKey ApiKey
+    err = json.Unmarshal(body, &apiKey)
+    if err != nil {
+        return nil, err
+    }
+
+    return &apiKey, nil
+}
+
+func printRequest(req *http.Request, body []byte) {
+    fmt.Printf("Request Method: %s\n", req.Method)
+    fmt.Printf("Request URL: %s\n", req.URL.String())
+    fmt.Printf("Request Headers: %v\n", req.Header)
+    fmt.Printf("Request Body: %s\n", string(body))
+}
+
+// Use the JWT to make an authenticated request to the API
+func makeAuthenticatedRequest(config Config, jwt *JWT, method, url string, body []byte) (*http.Response, error) {
+    needsRefresh := func(jwt *JWT) bool {
+        if jwt == nil {
+            return true
+        }
+        now := time.Now()
+        if now.After(jwt.ExpiresAt) {
+            return true
+        }
+        validityDuration := jwt.ExpiresAt.Sub(jwt.IssuedAt)
+        twoThirdsDuration := validityDuration * 2 / 3
+        return now.After(jwt.IssuedAt.Add(twoThirdsDuration))
+    }
+
+    if needsRefresh(jwt) {
+        if config.Debug {
+            fmt.Printf("Debug: Refreshing JWT - ApiKey set: %v, MasterKey set: %v\n",
+                       config.ApiKey != "", config.MasterKey != "")
+        }
+        newJWT, err := authenticateAndGetJWT(config)
+        if err != nil {
+            return nil, fmt.Errorf("failed to refresh JWT: %w", err)
+        }
+        *jwt = *newJWT
+        if err := storeJWT(jwt); err != nil {
+            return nil, fmt.Errorf("failed to store refreshed JWT: %w", err)
+        }
+        if config.Debug {
+            fmt.Println("JWT refreshed successfully")
+        }
+    }
+
+
+    req, err := http.NewRequest(method, url, bytes.NewBuffer(body))
+    if err != nil {
+        return nil, err
+    }
+
+    req.Header.Set("Content-Type", "application/json")
+    req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", jwt.Token))
+
+    if config.Debug {
+        printRequest(req, body)
+    }
+
+    client := &http.Client{}
+    return client.Do(req)
+}
+
+func listApiKeys(config Config, jwt *JWT) ([]ApiKey, error) {
+	url := fmt.Sprintf("http://%s:%d/api/v1/api_keys", config.ApiEndpoint, config.Port)
+
+	resp, err := makeAuthenticatedRequest(config, jwt, "GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to make authenticated request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("failed to list API keys: %s", string(body))
+	}
+
+	var apiKeys []ApiKey
+	err = json.Unmarshal(body, &apiKeys)
+	if err != nil {
+		return nil, fmt.Errorf("failed to unmarshal API keys: %w", err)
+	}
+
+	return apiKeys, nil
+}
+
+func displayApiKeys(apiKeys []ApiKey) {
+	headers := []string{"Key", "Type", "Name", "Description"}
+	maxWidths := make([]int, len(headers))
+	copy(maxWidths, []int{36, 12, 20, 30}) // Minimum widths for each header
+
+	for _, key := range apiKeys {
+		maxWidths[0] = max(maxWidths[0], len(key.Key))
+		maxWidths[1] = max(maxWidths[1], len(key.Type))
+		maxWidths[2] = max(maxWidths[2], len(key.Name))
+		maxWidths[3] = max(maxWidths[3], len(key.Description))
+	}
+
+	printSeparator(maxWidths)
+	printRow(headers, maxWidths)
+	printSeparator(maxWidths)
+
+	for _, key := range apiKeys {
+		row := []string{
+			key.Key,
+			key.Type,
+			key.Name,
+			key.Description,
+		}
+		printRow(row, maxWidths)
+	}
+
+	printSeparator(maxWidths)
+}
+
+// getJobs retrieves all jobs from the API
+func getJobs(config Config, jwt *JWT) ([]Job, error) {
+    url := fmt.Sprintf("http://%s:%d/api/v1/jobs", config.ApiEndpoint, config.Port)
+    fmt.Printf("Requesting URL: %s\n", url)
+    if config.Debug {
+        fmt.Printf("Debug: Making request - ApiKey set: %v, MasterKey set: %v\n",
+                   config.ApiKey != "", config.MasterKey != "")
+    }
+    resp, err := makeAuthenticatedRequest(config, jwt, "GET", url, nil)
     if err != nil {
         return nil, fmt.Errorf("HTTP request failed: %v", err)
     }
@@ -97,8 +481,10 @@ func getJobs(config Config) ([]Job, error) {
     }
 
     // Print the raw API response
-    fmt.Println("Raw API response:")
-    fmt.Println(string(body))
+    if config.Debug {
+	    fmt.Println("Raw API response:")
+	    fmt.Println(string(body))
+    }
 
     var jobs []Job
     err = json.Unmarshal(body, &jobs)
@@ -113,11 +499,11 @@ func getJobs(config Config) ([]Job, error) {
     return jobs, nil
 }
 
-func describeJob(config Config, id string) error {
+func describeJob(config Config, id string, jwt *JWT) error {
     url := fmt.Sprintf("http://%s:%d/api/v1/jobs/%s", config.ApiEndpoint, config.Port, id)
     fmt.Printf("Requesting URL: %s\n", url)
+    resp, err := makeAuthenticatedRequest(config, jwt, "GET", url, nil)
 
-    resp, err := http.Get(url)
     if err != nil {
         return fmt.Errorf("HTTP request failed: %v", err)
     }
@@ -207,33 +593,34 @@ func printRow(row []string, widths []int) {
 	fmt.Println()
 }
 
-func createJob(config Config, jsonFilePath string) error {
+func createJob(config Config, jsonFilePath string, jwt *JWT) error {
 	// Read the JSON file
 	jsonData, err := os.ReadFile(jsonFilePath)
 	if err != nil {
-		return fmt.Errorf("error reading JSON file: %v", err)
+		return fmt.Errorf("error reading JSON file: %w", err)
 	}
 
 	// Validate JSON
 	var job map[string]interface{}
 	if err := json.Unmarshal(jsonData, &job); err != nil {
-		return fmt.Errorf("invalid JSON: %v", err)
+		return fmt.Errorf("invalid JSON: %w", err)
 	}
 
 	// Encode the JSON in base64
 	encodedJob := base64.StdEncoding.EncodeToString(jsonData)
-	requestBody := fmt.Sprintf(`{"body":"%s"}`, encodedJob)
+	requestBody := []byte(fmt.Sprintf(`{"body":"%s"}`, encodedJob))
 
 	url := fmt.Sprintf("http://%s:%d/api/v1/jobs", config.ApiEndpoint, config.Port)
-	resp, err := http.Post(url, "application/json", bytes.NewBufferString(requestBody))
+
+	resp, err := makeAuthenticatedRequest(config, jwt, "POST", url, requestBody)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to make authenticated request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to read response body: %w", err)
 	}
 
 	if config.Debug {
@@ -242,24 +629,25 @@ func createJob(config Config, jsonFilePath string) error {
 	}
 
 	if resp.StatusCode != http.StatusCreated {
-		return fmt.Errorf("failed to create job: %s", string(body))
+		return fmt.Errorf("failed to create job (status %d): %s", resp.StatusCode, string(body))
 	}
 
 	fmt.Println("Job created successfully")
 	return nil
 }
 
-func getAgents(config Config) ([]Agent, error) {
+func getAgents(config Config, jwt *JWT) ([]Agent, error) {
     url := fmt.Sprintf("http://%s:%d/api/v1/agents", config.ApiEndpoint, config.Port)
-    resp, err := http.Get(url)
+
+    resp, err := makeAuthenticatedRequest(config, jwt, "GET", url, nil)
     if err != nil {
-        return nil, err
+        return nil, fmt.Errorf("failed to make authenticated request: %w", err)
     }
     defer resp.Body.Close()
 
     body, err := io.ReadAll(resp.Body)
     if err != nil {
-        return nil, err
+        return nil, fmt.Errorf("failed to read response body: %w", err)
     }
 
     if config.Debug {
@@ -270,23 +658,25 @@ func getAgents(config Config) ([]Agent, error) {
     var agents []Agent
     err = json.Unmarshal(body, &agents)
     if err != nil {
-        return nil, err
+        return nil, fmt.Errorf("failed to unmarshal response: %w", err)
     }
 
     return agents, nil
 }
 
-func getAgent(config Config, id string) (*Agent, error) {
+func getAgent(config Config, jwt *JWT, id string) (*Agent, error) {
     url := fmt.Sprintf("http://%s:%d/api/v1/agents/%s", config.ApiEndpoint, config.Port, id)
-    resp, err := http.Get(url)
+    resp, err := makeAuthenticatedRequest(config, jwt, "GET", url, nil)
+
     if err != nil {
-        return nil, err
+        return nil, fmt.Errorf("failed to make authenticated request: %w", err)
     }
+
     defer resp.Body.Close()
 
     body, err := io.ReadAll(resp.Body)
     if err != nil {
-        return nil, err
+        return nil, fmt.Errorf("failed to read response body: %w", err)
     }
 
     if config.Debug {
@@ -297,7 +687,7 @@ func getAgent(config Config, id string) (*Agent, error) {
     var agent Agent
     err = json.Unmarshal(body, &agent)
     if err != nil {
-        return nil, err
+        return nil, fmt.Errorf("failed to unmarshal JSON: %w", err)
     }
 
     return &agent, nil
@@ -341,67 +731,90 @@ func displayAgents(agents []Agent) {
 }
 
 func main() {
-	debug := flag.Bool("debug", false, "Enable debug mode")
-	flag.Parse()
+    debug := flag.Bool("debug", false, "Enable debug mode")
+    flag.Parse()
 
-	args := flag.Args()
-	if len(args) < 2 {
-		fmt.Println("Usage: hiveforgectl [get jobs | create job <json_file>] [-d|--debug]")
-		return
-	}
-
-	config, err := loadConfig()
-	if err != nil {
-		fmt.Println("Error loading config:", err)
-		return
-	}
-	config.Debug = *debug
-
-	if config.Debug {
-		fmt.Println("Debug mode is enabled")
-	}
-
-	switch {
-	case args[0] == "get" && args[1] == "jobs":
-    fmt.Println("Fetching jobs...")
-    jobs, err := getJobs(config)
-    if err != nil {
-        fmt.Printf("Error fetching jobs: %v\n", err)
+    args := flag.Args()
+    if len(args) < 1 {
+        printUsage()
         return
     }
 
-    if len(jobs) == 0 {
-        fmt.Println("No jobs found.")
-    } else {
-        fmt.Printf("Retrieved %d jobs. Displaying...\n", len(jobs))
-        displayJobs(jobs)
+    config, jwt, err := loadConfig()
+    if err != nil {
+        fmt.Println("Error loading config:", err)
+        return
     }
-	case args[0] == "create" && args[1] == "job":
-		if len(args) < 3 {
-			fmt.Println("Usage: hiveforgectl create job <json_file> [-d|--debug]")
-			return
-		}
-		jsonFilePath := args[2]
-		err := createJob(config, jsonFilePath)
-		if err != nil {
-			fmt.Println("Error creating job:", err)
-		}
+    config.Debug = *debug
 
-	case args[0] == "describe" && args[1] == "job":
-    if len(args) < 3 {
-        fmt.Println("Usage: hiveforgectl describe job <id> [-d|--debug]")
+    if config.Debug {
+        fmt.Println("Debug mode is enabled")
+    }
+
+    if config.Debug {
+        fmt.Printf("Debug: Config loaded - ApiKey set: %v, MasterKey set: %v\n",
+                   config.ApiKey != "", config.MasterKey != "")
+    }
+
+    if config.MasterKey == "" && config.ApiKey == "" {
+        fmt.Println("Error: Neither master key nor API key is set in the configuration. At least one is required.")
         return
     }
 
-    jobID := args[2]
-    err := describeJob(config, jobID)
-    if err != nil {
-        fmt.Printf("Error describing job: %v\n", err)
+    switch args[0] {
+    case "authenticate":
+        handleAuthenticate(config)
+    case "get":
+        handleGet(args[1:], config, jwt)
+    case "create":
+        handleCreate(args[1:], config, jwt)
+    case "describe":
+        handleDescribe(args[1:], config, jwt)
+    case "generate-key":
+        handleGenerateKey(args[1:], config, jwt)
+    case "list-keys":
+        handleListKeys(config, jwt)
+    default:
+        fmt.Println("Invalid command.")
+        printUsage()
+    }
+}
+
+
+func printUsage() {
+    fmt.Println("Usage: hiveforgectl [command] [subcommand] [args...] [-d|--debug]")
+    fmt.Println("Commands:")
+    fmt.Println("  authenticate")
+    fmt.Println("  get [jobs|agents]")
+    fmt.Println("  create job <json_file>")
+    fmt.Println("  describe [job|agent] <id>")
+    fmt.Println("  generate-key <type> <name> <description>")
+    fmt.Println("  list-keys")
+}
+
+func handleGet(args []string, config Config, jwt *JWT) {
+    if len(args) < 1 {
+        fmt.Println("Usage: hiveforgectl get [jobs|agents]")
+        return
     }
 
-    case args[0] == "get" && args[1] == "agents":
+    switch args[0] {
+    case "jobs":
+        fmt.Println("Fetching jobs...")
+        jobs, err := getJobs(config, jwt)
+        if err != nil {
+            fmt.Printf("Error fetching jobs: %v\n", err)
+            return
+        }
+        if len(jobs) == 0 {
+            fmt.Println("No jobs found.")
+        } else {
+            fmt.Printf("Retrieved %d jobs. Displaying...\n", len(jobs))
+            displayJobs(jobs)
+        }
+    case "agents":
         fmt.Println("Fetching agents...")
-        agents, err := getAgents(config)
+        agents, err := getAgents(config, jwt)
         if err != nil {
             fmt.Printf("Error fetching agents: %v\n", err)
             return
@@ -412,14 +825,44 @@ func main() {
             fmt.Printf("Retrieved %d agents. Displaying...\n", len(agents))
             displayAgents(agents)
         }
+    default:
+        fmt.Println("Invalid subcommand. Usage: hiveforgectl get [jobs|agents]")
+    }
+}
 
-    case args[0] == "describe" && args[1] == "agent":
-        if len(args) < 3 {
-            fmt.Println("Usage: hiveforgectl describe agent <id> [-d|--debug]")
-            return
+func handleCreate(args []string, config Config, jwt *JWT) {
+	if len(args) < 2 {
+		fmt.Println("Usage: hiveforgectl create job <json_file>")
+		return
+	}
+
+	if args[0] == "job" {
+		jsonFilePath := args[1]
+		err := createJob(config, jsonFilePath, jwt)
+		if err != nil {
+			fmt.Println("Error creating job:", err)
+		}
+	} else {
+		fmt.Println("Invalid subcommand. Usage: hiveforgectl create job <json_file>")
+	}
+}
+
+func handleDescribe(args []string, config Config, jwt *JWT) {
+    if len(args) < 2 {
+        fmt.Println("Usage: hiveforgectl describe [job|agent] <id>")
+        return
+    }
+
+    switch args[0] {
+    case "job":
+        jobID := args[1]
+        err := describeJob(config, jobID, jwt)
+        if err != nil {
+            fmt.Printf("Error describing job: %v\n", err)
         }
-        agentID := args[2]
-        agent, err := getAgent(config, agentID)
+    case "agent":
+        agentID := args[1]
+        agent, err := getAgent(config, jwt, agentID)
         if err != nil {
             fmt.Printf("Error describing agent: %v\n", err)
             return
@@ -430,8 +873,60 @@ func main() {
             return
         }
         fmt.Println(string(agentJSON))
-
     default:
-        fmt.Println("Invalid command. Usage: hiveforgectl [get jobs | create job <json_file> | describe job <id> | get agents | describe agent <id>] [-d|--debug]")
+        fmt.Println("Invalid subcommand. Usage: hiveforgectl describe [job|agent] <id>")
     }
+}
+
+func handleAuthenticate(config Config) {
+    jwt, err := authenticateAndGetJWT(config)
+    if err != nil {
+        fmt.Printf("Authentication failed: %v\n", err)
+        return
+    }
+
+    if err := storeJWT(jwt); err != nil {
+        fmt.Printf("Failed to store JWT: %v\n", err)
+        return
+    }
+
+    fmt.Println("Authentication successful. JWT stored.")
+}
+
+func handleGenerateKey(args []string, config Config, jwt *JWT) {
+    if len(args) < 3 {
+        fmt.Println("Usage: hiveforgectl generate-key <type> <name> <description>")
+        return
+    }
+    validKeyTypes := map[string]bool{
+        "operator_key": true,
+        "agent_key":    true,
+        "reader_key":   true,
+    }
+    if !validKeyTypes[args[0]] {
+        fmt.Println("Invalid key type. Valid key types: operator_key, agent_key, reader_key")
+        return
+    }
+
+    keyType, name, description := args[0], args[1], args[2]
+    apiKey, err := generateApiKey(config, jwt, keyType, name, description)
+    if err != nil {
+        switch err.Error() {
+        case "neither master key (for operator key) nor API key is set":
+            fmt.Println("Error: Neither master key (for operator key) nor API key is set. At least one is required.")
+        default:
+            fmt.Printf("Error generating API key: %v\n", err)
+        }
+        return
+    }
+    fmt.Printf("Successfully generated %s API key: %s\n", keyType, apiKey.Key)
+}
+
+func handleListKeys(config Config, jwt *JWT) {
+    apiKeys, err := listApiKeys(config, jwt)
+	if err != nil {
+		fmt.Printf("Error listing API keys: %v\n", err)
+		return
+	}
+	displayApiKeys(apiKeys)
 }

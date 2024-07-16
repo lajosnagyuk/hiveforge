@@ -1,27 +1,50 @@
 defmodule HiveforgeController.Router do
   use Plug.Router
+  require Logger
 
+  def log_headers(conn, _opts) do
+    headers = conn.req_headers |> Enum.map(fn {k, v} -> "#{k}: #{v}" end) |> Enum.join("\n")
+    Logger.info("Headers in main Router:\n#{headers}")
+    conn
+  end
+
+  plug(:log_headers)
   plug(Plug.Logger)
   plug(:match)
+
+  plug(Plug.Session,
+    store: :ets,
+    key: "_hiveforge_key",
+    table: HiveforgeController.SessionStore.table_name()
+  )
+
+  plug(:fetch_session)
+
   plug(Plug.Parsers,
-    parsers: [:json],
+    parsers: [:urlencoded, :json],
+    pass: ["*/*"],
     json_decoder: Jason
   )
+
   plug(:dispatch)
 
+  # unauthenticated routes
   get("/", do: send_resp(conn, 200, "OK"))
   get("/api/v1/health", do: send_resp(conn, 200, "OK"))
   get("/api/v1/readiness", do: send_resp(conn, 200, "OK"))
-# Jobs
-  get "/api/v1/jobs", do: HiveforgeController.JobController.call(conn, action: :list_jobs)
-  get "/api/v1/jobs/:id", do: HiveforgeController.JobController.call(conn, action: :get_job)
 
-  post "/api/v1/jobs", do: HiveforgeController.JobController.call(conn, action: :create_job)
-# Agents
-  post "/api/v1/agents/register", do: HiveforgeController.AgentController.call(conn, action: :register)
-  post "/api/v1/agents/heartbeat", do: HiveforgeController.AgentController.call(conn, action: :heartbeat)
-  get "/api/v1/agents/:id", do: HiveforgeController.AgentController.call(conn, action: :get_agent)
-  get "/api/v1/agents", do: HiveforgeController.AgentController.call(conn, action: :list_agents)
+  # JWT authentication routes (takes API key hash)
+  get("/api/v1/auth/challenge",
+    do: HiveforgeController.AuthController.call(conn, action: :request_challenge)
+  )
 
+  post("/api/v1/auth/verify",
+    do: HiveforgeController.AuthController.call(conn, action: :verify_challenge)
+  )
+
+  # Forward everything else to the ProtectedRouter
+  forward("/api/v1", to: HiveforgeController.ProtectedRouter)
+
+  # Nappy clauses
   match(_, do: send_resp(conn, 404, "Not Found"))
 end

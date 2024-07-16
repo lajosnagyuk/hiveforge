@@ -15,3 +15,15 @@ config :hiveforge_controller, HiveforgeController.Repo,
 
 config :hiveforge_controller,
   ecto_repos: [HiveforgeController.Repo]
+
+config :hiveforge_controller, HiveforgeController.AgentController,
+  masterkey: System.get_env("HIVEFORGE_MASTER_KEY")
+
+config :hiveforge_controller, HiveforgeController.JobController,
+  masterkey: System.get_env("HIVEFORGE_MASTER_KEY")
+
+config :hiveforge_controller, HiveforgeController.ApiKeyController,
+  masterkey: System.get_env("HIVEFORGE_MASTER_KEY")
+
+config :hiveforge_controller, HiveforgeController.JWTAuth,
+  secret_key: System.get_env("HIVEFORGE_JWT_SECRET_KEY")

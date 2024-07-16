@@ -1,7 +1,4 @@
-# install golang
-https://go.dev/dl/
-
-# build the project
+# build hiveforgectl binary
 ```bash
 go build -o hiveforgectl
 ```

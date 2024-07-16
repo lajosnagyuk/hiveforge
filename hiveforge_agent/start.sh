@@ -15,5 +15,8 @@ AGENT_ID="${HOSTNAME}-${HASH}"
 # Export the agent ID as an environment variable
 export HIVEFORGE_AGENT_ID=$AGENT_ID
 
+# Log the agent ID (but not the keys) for debugging purposes
+echo "Agent ID: $AGENT_ID"
+
 # Start the Elixir application
 exec bin/hiveforge_agent start

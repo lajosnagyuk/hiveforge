@@ -44,13 +44,12 @@ HIVEFORGE_CONTROLLER_CERTFILE=/hiveforge_controller/misc/certificates/test-serve
 HIVEFORGE_CONTROLLER_KEYFILE=/hiveforge_controller/misc/certificates/test-server-key.pem \
 make dev-run
 ```
-
+# Build and push container
+DOCKER_TAG=erlang-27.0-20240623-7 \
+make all
 
 # Release and install Helm Charts
 ```bash
-helm package Helm/hiveforge_controller
-hiveforge_controller_chart_version=$(cat Helm/hiveforge_controller/Chart.yaml | grep version | awk '{print $2}')
-# delete hiveforge-db-setup job first
-kubectl delete job hiveforge-db-setup -n hiveforge-controller
-helm upgrade --install hiveforge-controller --namespace hiveforge-controller hiveforge-controller-${hiveforge_controller_chart_version}.tgz --values values-example.yaml
+./controller_install.sh
+
 ```

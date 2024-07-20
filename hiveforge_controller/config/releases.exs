@@ -1,5 +1,12 @@
 import Config
 
+config :logger, :console,
+  format: "$time $metadata[$level] $message\n",
+  metadata: [:request_id],
+  level: :debug
+
+config :logger, level: :debug
+
 config :hiveforge_controller, HiveforgeController.Repo,
   username: System.get_env("DB_USERNAME"),
   password: System.get_env("DB_PASSWORD"),
@@ -12,6 +19,8 @@ config :hiveforge_controller, HiveforgeController.Repo,
   ssl_opts: [
     verify: :verify_none
   ]
+
+config :hiveforge_controller, :enable_gzip_decompression, true
 
 config :hiveforge_controller,
   ecto_repos: [HiveforgeController.Repo]

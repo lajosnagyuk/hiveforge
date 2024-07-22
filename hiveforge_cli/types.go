@@ -2,10 +2,11 @@ package main
 
 type DirectoryHashResult struct {
 	RootPath           string          `json:"root"`
-	TotalFiles         int             `json:"files"`
-	TotalSize          int64           `json:"size"`
-	HashingTime        float64         `json:"time"`
 	DirectoryStructure *DirectoryEntry `json:"dir"`
+	TotalSize          int64           `json:"size"`
+	TotalFiles         int             `json:"files"`
+	HashingTime        float64         `json:"time"`
+	IgnoredItems       []IgnoredItem   `json:"ignoredItems"`
 }
 
 type DirectoryEntry struct {

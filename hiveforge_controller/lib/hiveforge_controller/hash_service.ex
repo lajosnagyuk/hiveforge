@@ -1,7 +1,7 @@
 
 defmodule HiveforgeController.HashService do
   alias HiveforgeController.Repo
-  alias HiveforgeController.Schemas.{HashResult, FileHash, ChunkHash}
+  alias HiveforgeController.Schemas.{HashResult, FileHash, ChunkHash, FileChunkMap}
   import Ecto.Query
 
   def process_hash_result(json_data) do
@@ -29,11 +29,24 @@ defmodule HiveforgeController.HashService do
     |> Repo.insert()
   end
 
-  defp process_files(hash_result, files) do
+  defp process_files(hash_result, files) when is_list(files) do
     Enum.each(files, fn file ->
       process_file(hash_result, file)
     end)
     :ok
+  end
+
+  defp process_files(hash_result, %{"children" => children}) do
+    process_files(hash_result, children)
+  end
+
+  def get_ordered_chunks(file_hash_id) do
+    Repo.all(from fcm in FileChunkMap,
+      join: ch in ChunkHash, on: fcm.chunk_hash_id == ch.id,
+      where: fcm.file_hash_id == ^file_hash_id,
+      order_by: [asc: fcm.sequence],
+      select: %{sequence: fcm.sequence, hash: ch.hash, status: ch.status}
+    )
   end
 
   defp process_file(hash_result, %{"type" => "file"} = file) do
@@ -54,38 +67,66 @@ defmodule HiveforgeController.HashService do
     process_chunks(file_hash, file["hashes"]["hashes"])
   end
 
-  defp process_file(hash_result, %{"type" => "directory"} = dir) do
-    process_files(hash_result, dir["children"])
+  defp process_file(hash_result, %{"type" => "directory", "children" => children}) do
+    process_files(hash_result, children)
+  end
+
+  defp process_file(hash_result, unexpected) do
+    Logger.error("Unexpected structure in process_file: #{inspect(unexpected)}")
+    {:error, :unexpected_structure}
   end
 
   defp process_chunks(file_hash, chunks) do
-    Enum.each(chunks, fn chunk ->
-      process_chunk(file_hash, chunk)
+    chunks
+    |> Enum.with_index(1)  # Start index at 1
+    |> Enum.each(fn {chunk, index} ->
+      process_chunk(file_hash, chunk, index)
     end)
   end
 
-  defp process_chunk(file_hash, chunk) do
-    case Repo.get_by(ChunkHash, file_hash_id: file_hash.id, hash: chunk) do
+  defp update_file_hash(chunk_hashes, file_hash) do
+    chunk_ids = Enum.map(chunk_hashes, & &1.id)
+    FileHash.changeset(file_hash, %{chunk_hashes: chunk_ids})
+    |> Repo.update()
+  end
+
+  defp process_chunk(file_hash, chunk, sequence) do
+    chunk_hash = get_or_create_chunk_hash(chunk)
+    create_file_chunk_map(file_hash, chunk_hash, sequence)
+  end
+
+  defp get_or_create_chunk_hash(chunk) do
+    case Repo.one(from ch in ChunkHash, where: ch.hash == ^chunk, limit: 1) do
       nil ->
-        %ChunkHash{}
-        |> ChunkHash.changeset(%{hash: chunk, status: "missing", file_hash_id: file_hash.id})
-        |> Repo.insert()
+        {:ok, chunk_hash} =
+          %ChunkHash{}
+          |> ChunkHash.changeset(%{hash: chunk, status: "missing"})
+          |> Repo.insert()
+        chunk_hash
 
       existing_chunk ->
-        {:ok, existing_chunk}
+        existing_chunk
     end
+  end
+
+  defp create_file_chunk_map(file_hash, chunk_hash, sequence) do
+    %FileChunkMap{}
+    |> FileChunkMap.changeset(%{
+      file_hash_id: file_hash.id,
+      chunk_hash_id: chunk_hash.id,
+      sequence: sequence
+    })
+    |> Repo.insert()
   end
 
   def find_missing_chunks(root_path) do
     query =
-      from ch in ChunkHash,
-        join: fh in FileHash,
-        on: ch.file_hash_id == fh.id,
-        join: hr in HashResult,
-        on: fh.hash_result_id == hr.id,
-        where: hr.root_path == ^root_path and ch.status == "missing",
-        select: {hr.id, fh.id, fh.file_name, ch.hash}
-
+      from fcm in FileChunkMap,
+      join: ch in ChunkHash, on: fcm.chunk_hash_id == ch.id,
+      join: fh in FileHash, on: fcm.file_hash_id == fh.id,
+      join: hr in HashResult, on: fh.hash_result_id == hr.id,
+      where: hr.root_path == ^root_path and ch.status == "missing",
+      select: {hr.id, fh.id, fh.file_name, ch.hash, fcm.sequence}
     Repo.all(query)
   end
 
@@ -107,9 +148,12 @@ defmodule HiveforgeController.HashService do
   end
 
   def get_chunk_hashes_by_file_hash(file_hash_id) do
-    ChunkHash
-    |> where(file_hash_id: ^file_hash_id)
-    |> Repo.all()
+    Repo.all(from fcm in FileChunkMap,
+      join: ch in ChunkHash, on: fcm.chunk_hash_id == ch.id,
+      where: fcm.file_hash_id == ^file_hash_id,
+      order_by: [asc: fcm.sequence],
+      select: %{sequence: fcm.sequence, hash: ch.hash, status: ch.status}
+    )
   end
 
   def delete_hash_result(hash_result_id) do

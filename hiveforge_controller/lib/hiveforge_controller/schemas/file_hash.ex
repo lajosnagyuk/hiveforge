@@ -1,4 +1,3 @@
-# File: lib/hiveforge_controller/schemas/file_hash.ex
 defmodule HiveforgeController.Schemas.FileHash do
   use Ecto.Schema
   import Ecto.Changeset
@@ -9,8 +8,11 @@ defmodule HiveforgeController.Schemas.FileHash do
     field :chunk_count, :integer
     field :total_size, :integer
     field :status, :string, default: "pending"
+
     belongs_to :hash_result, HiveforgeController.Schemas.HashResult
-    has_many :chunk_hashes, HiveforgeController.Schemas.ChunkHash
+    has_many :file_chunk_maps, HiveforgeController.Schemas.FileChunkMap
+    has_many :chunk_hashes, through: [:file_chunk_maps, :chunk_hash]
+
     timestamps()
   end
 

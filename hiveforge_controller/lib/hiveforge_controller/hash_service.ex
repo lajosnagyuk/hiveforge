@@ -1,68 +1,4 @@
-# File: lib/hiveforge_controller/schemas/hash_result.ex
-defmodule HiveforgeController.Schemas.HashResult do
-  use Ecto.Schema
-  import Ecto.Changeset
 
-  schema "hash_results" do
-    field :root_path, :string
-    field :total_files, :integer
-    field :total_size, :integer
-    field :hashing_time, :float
-    field :status, :string, default: "pending"
-    has_many :file_hashes, HiveforgeController.Schemas.FileHash
-    timestamps()
-  end
-
-  def changeset(hash_result, attrs) do
-    hash_result
-    |> cast(attrs, [:root_path, :total_files, :total_size, :hashing_time, :status])
-    |> validate_required([:root_path, :total_files, :total_size, :hashing_time])
-  end
-end
-
-# File: lib/hiveforge_controller/schemas/file_hash.ex
-defmodule HiveforgeController.Schemas.FileHash do
-  use Ecto.Schema
-  import Ecto.Changeset
-
-  schema "file_hashes" do
-    field :file_name, :string
-    field :chunk_size, :integer
-    field :chunk_count, :integer
-    field :total_size, :integer
-    field :status, :string, default: "pending"
-    belongs_to :hash_result, HiveforgeController.Schemas.HashResult
-    has_many :chunk_hashes, HiveforgeController.Schemas.ChunkHash
-    timestamps()
-  end
-
-  def changeset(file_hash, attrs) do
-    file_hash
-    |> cast(attrs, [:file_name, :chunk_size, :chunk_count, :total_size, :status, :hash_result_id])
-    |> validate_required([:file_name, :total_size, :hash_result_id])
-  end
-end
-
-# File: lib/hiveforge_controller/schemas/chunk_hash.ex
-defmodule HiveforgeController.Schemas.ChunkHash do
-  use Ecto.Schema
-  import Ecto.Changeset
-
-  schema "chunk_hashes" do
-    field :hash, :string
-    field :status, :string, default: "pending"
-    belongs_to :file_hash, HiveforgeController.Schemas.FileHash
-    timestamps()
-  end
-
-  def changeset(chunk_hash, attrs) do
-    chunk_hash
-    |> cast(attrs, [:hash, :status, :file_hash_id])
-    |> validate_required([:hash, :file_hash_id])
-  end
-end
-
-# File: lib/hiveforge_controller/hash_service.ex
 defmodule HiveforgeController.HashService do
   alias HiveforgeController.Repo
   alias HiveforgeController.Schemas.{HashResult, FileHash, ChunkHash}
@@ -72,7 +8,7 @@ defmodule HiveforgeController.HashService do
     Repo.transaction(fn ->
       with {:ok, hash_result} <- create_hash_result(json_data),
            :ok <- process_files(hash_result, json_data["dir"]["children"]) do
-        {:ok, hash_result}
+        hash_result  # Return just the hash_result, not {:ok, hash_result}
       else
         {:error, reason} -> Repo.rollback(reason)
       end

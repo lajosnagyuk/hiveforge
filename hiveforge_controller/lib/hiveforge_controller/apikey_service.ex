@@ -112,7 +112,7 @@ defmodule HiveforgeController.ApiKeyService do
         {_, :generate_operator_key} ->
           {:error, :unauthorized_operator_key_generation}
 
-        {"agent_key", action} when action in [:register_agent, :update_heartbeat, :get_job, :list_jobs, :request_challenge, :verify_challenge] ->
+        {"agent_key", action} when action in [:register_agent, :update_heartbeat, :get_job, :list_jobs, :request_challenge, :verify_challenge, :submit_hash_result] ->
           :ok
 
         {"reader_key", action} when action in [:list_agents, :get_agent, :get_job, :list_jobs, :request_challenge, :verify_challenge] ->

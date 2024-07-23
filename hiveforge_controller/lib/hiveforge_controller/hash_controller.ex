@@ -1,7 +1,7 @@
 defmodule HiveforgeController.HashController do
   import Plug.Conn
   require Logger
-  alias HiveforgeController.ApiKeyService
+  alias HiveforgeController.{ApiKeyService, HashService}
 
   @max_log_length 200
 
@@ -78,6 +78,31 @@ defmodule HiveforgeController.HashController do
             Logger.error("HashController: JSON parsing error: #{inspect(reason)}")
             {:error, reason}
         end
+    end
+  end
+
+  defp process_hash(conn) do
+    Logger.debug("HashController: Processing hash")
+    case parse_body(conn) do
+      {:ok, hash_result} ->
+        Logger.info("HashController: Successfully parsed hash result")
+        log_hash_result(hash_result)
+        case HashService.process_hash_result(hash_result) do
+          {:ok, _result} ->
+            conn
+            |> put_resp_content_type("text/plain")
+            |> send_resp(200, "Hash received and processed successfully")
+          {:error, reason} ->
+            Logger.error("HashController: Failed to process hash result: #{inspect(reason)}")
+            conn
+            |> put_resp_content_type("text/plain")
+            |> send_resp(500, "Failed to process hash result")
+        end
+      {:error, reason} ->
+        Logger.error("HashController: Failed to parse body: #{inspect(reason)}")
+        conn
+        |> put_resp_content_type("text/plain")
+        |> send_resp(400, "Invalid request body")
     end
   end
 end

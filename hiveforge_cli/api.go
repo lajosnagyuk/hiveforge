@@ -68,6 +68,6 @@ func sendHashResultToAPI(config Config, jwt *JWT, result *DirectoryHashResult) e
 		return fmt.Errorf("API returned non-OK status: %d, body: %s", resp.StatusCode, string(body))
 	}
 
-	fmt.Println("Hash result successfully sent to API")
+	fmt.Println("Hash result successfully sent to API, sending result complete.")
 	return nil
 }

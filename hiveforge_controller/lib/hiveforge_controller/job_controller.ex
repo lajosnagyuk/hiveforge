@@ -1,6 +1,6 @@
 defmodule HiveforgeController.JobController do
   use Plug.Builder
-  alias HiveforgeController.{JobService, ApiAuth, Repo}
+  alias HiveforgeController.{JobService, Repo}
   import Plug.Conn
   require Logger
 

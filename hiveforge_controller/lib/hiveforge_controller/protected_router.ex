@@ -31,7 +31,7 @@ defmodule HiveforgeController.ProtectedRouter do
 
 
   post("/hash-results", do:
-    HiveforgeController.HashController.call(conn, action: :receive_hash)
+    HiveforgeController.Controllers.HashController.call(conn, action: :receive_hash)
   )
 
 

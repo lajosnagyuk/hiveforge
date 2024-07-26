@@ -3,7 +3,7 @@ replicaCount: "1"
 image:
   registry: "quay.io"
   repository: "lajos_nagy/hiveforge-controller"
-  tag: "erlang-27.0-20240723-10"
+  tag: "erlang-27.0-20240726-10"
   pullPolicy: "IfNotPresent"
 
 
@@ -11,7 +11,7 @@ migration:
   image:
     registry: "quay.io"
     repository: "lajos_nagy/hiveforge-database-migrations"
-    tag: "erlang-27.0-20240723-10"
+    tag: "erlang-27.0-20240726-10"
     pullPolicy: "IfNotPresent"
 
 tunables:
@@ -25,7 +25,14 @@ tunables:
     name: "hiveforge-database"
     clusterName: "hiveforge-cluster"
     namespace: "hiveforge-database"
-
+  storage:
+    secretName: "hiveforge-storage-secret"
+    backend: "minio"
+    bucketName: "hiveforge-controller-test-bucket"
+    endpoint: "http://10.1.99.1:9000"
+    accessKeyId: "iUCkD0IAY29pMA1roZWJ"
+    secretAccessKey: "5FYkByfO5n1eM2ooOiTmWWR9yhwesebyFWk1Jiov"
+    region: ""
 env:
   - name: TLS_TERMINATION_METHOD
     value: "service"

@@ -41,6 +41,28 @@ spec:
               value: "{{ .Values.tunables.database.clusterName }}.{{ .Values.tunables.database.namespace }}.svc.cluster.local"
             - name: DB_PORT
               value: "{{ .Values.tunables.network.pgPort }}"
+            - name: S3_BACKEND
+              value: "{{ .Values.tunables.storage.backend }}"
+            - name: S3_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: "{{ .Values.tunables.storage.secretName }}"
+                  key: s3-access-key-id
+            - name: S3_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: "{{ .Values.tunables.storage.secretName }}"
+                  key: s3-secret-access-key
+            - name: S3_BUCKET_NAME
+              value: "{{ .Values.tunables.storage.bucketName }}"
+            {{- if eq .Values.tunables.storage.backend "minio" }}
+            - name: S3_ENDPOINT
+              value: "{{ .Values.tunables.storage.endpoint }}"
+            {{- end }}
+            {{- if eq .Values.tunables.storage.backend "backblaze" }}
+            - name: S3_REGION
+              value: "{{ .Values.tunables.storage.region }}"
+            {{- end }}
             - name: HIVEFORGE_MASTER_KEY
               valueFrom:
                 secretKeyRef:

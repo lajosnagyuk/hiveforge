@@ -23,6 +23,14 @@ tunables:
     name: "hiveforge-database"
     clusterName: "hiveforge-cluster"
     namespace: "hiveforge-database"
+  storage:
+    secretName: "hiveforge-storage-secret"
+    backend: "minio"
+    bucketName: "hiveforge"
+    endpoint: "http://10.1.2.3:9000"
+    accessKey: ""
+    secretAccessKey: ""
+    region: ""
 
 env:
   - name: TLS_TERMINATION_METHOD

@@ -5,9 +5,10 @@ defmodule HiveforgeController.Application do
 
   @impl true
   def start(_type, _args) do
+    HiveforgeController.SetConfig.init()
+
     internal_service_port = System.get_env("HIVEFORGE_CONTROLLER_INTERNAL_SERVICE_PORT") || "4000"
 
-    # Determine the scheme and options based on TLS_TERMINATION_METHOD
     {scheme, options} =
       case System.get_env("TLS_TERMINATION_METHOD") do
         "service" ->

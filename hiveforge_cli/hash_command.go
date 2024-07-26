@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -9,7 +10,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"encoding/json"
 
 	"github.com/schollz/progressbar/v3"
 	"github.com/zeebo/blake3"
@@ -33,141 +33,137 @@ type IgnoredItem struct {
 }
 
 type HashingOutput struct {
-    bar            *progressbar.ProgressBar
-    mutex          sync.Mutex
-    recentFiles    []string
-    ignoredItems   []IgnoredItem
-    totalFiles     int
-    processedFiles int
-    totalSize      int64
-    processedSize  int64
-    startTime      time.Time
-    currentFile    string
-    isCompleted    bool
-    lastLines      int
+	bar            *progressbar.ProgressBar
+	mutex          sync.Mutex
+	recentFiles    []string
+	ignoredItems   []IgnoredItem
+	totalFiles     int
+	processedFiles int
+	totalSize      int64
+	processedSize  int64
+	startTime      time.Time
+	currentFile    string
+	isCompleted    bool
+	lastLines      int
 }
 
 func newHashingOutput(totalSize int64, totalFiles int) *HashingOutput {
-    return &HashingOutput{
-        bar: progressbar.NewOptions64(
-            totalSize,
-            progressbar.OptionSetWidth(50),
-            progressbar.OptionSetDescription("Hashing"),
-            progressbar.OptionSetRenderBlankState(true),
-            progressbar.OptionShowBytes(true),
-            progressbar.OptionThrottle(65*time.Millisecond),
-            progressbar.OptionShowCount(),
-            progressbar.OptionOnCompletion(func() {}), // Empty function to prevent automatic "completed" message
-        ),
-        recentFiles:  make([]string, 0, 5),
-        ignoredItems: make([]IgnoredItem, 0),
-        totalSize:    totalSize,
-        totalFiles:   totalFiles,
-        startTime:    time.Now(),
-    }
+	return &HashingOutput{
+		bar: progressbar.NewOptions64(
+			totalSize,
+			progressbar.OptionSetWidth(50),
+			progressbar.OptionSetDescription("Hashing"),
+			progressbar.OptionSetRenderBlankState(true),
+			progressbar.OptionShowBytes(true),
+			progressbar.OptionThrottle(65*time.Millisecond),
+			progressbar.OptionShowCount(),
+			progressbar.OptionOnCompletion(func() {}), // Empty function to prevent automatic "completed" message
+		),
+		recentFiles:  make([]string, 0, 5),
+		ignoredItems: make([]IgnoredItem, 0),
+		totalSize:    totalSize,
+		totalFiles:   totalFiles,
+		startTime:    time.Now(),
+	}
 }
 
 func (ho *HashingOutput) updateProgress(size int64) {
-    ho.mutex.Lock()
-    defer ho.mutex.Unlock()
+	ho.mutex.Lock()
+	defer ho.mutex.Unlock()
 
-    ho.processedSize += size
-    ho.processedFiles++
-    ho.bar.Add64(size)
+	ho.processedSize += size
+	ho.processedFiles++
+	ho.bar.Add64(size)
 }
 
 func (ho *HashingOutput) updateCurrentFile(path string) {
-    ho.mutex.Lock()
-    defer ho.mutex.Unlock()
+	ho.mutex.Lock()
+	defer ho.mutex.Unlock()
 
-    ho.currentFile = path
-    ho.recentFiles = append([]string{path}, ho.recentFiles...)
-    if len(ho.recentFiles) > 5 {
-        ho.recentFiles = ho.recentFiles[:5]
-    }
+	ho.currentFile = path
+	ho.recentFiles = append([]string{path}, ho.recentFiles...)
+	if len(ho.recentFiles) > 5 {
+		ho.recentFiles = ho.recentFiles[:5]
+	}
 }
 
 func (ho *HashingOutput) printStatus() {
-    ho.mutex.Lock()
-    defer ho.mutex.Unlock()
+	ho.mutex.Lock()
+	defer ho.mutex.Unlock()
 
-    // Clear previous lines
-    if ho.lastLines > 0 {
-        fmt.Printf("\033[%dA\033[J", ho.lastLines)
-    }
+	// Clear previous lines
+	if ho.lastLines > 0 {
+		fmt.Printf("\033[%dA\033[J", ho.lastLines)
+	}
 
-    // Print new status
-    fmt.Print(ho.bar.String() + "\n")
-    fmt.Printf("Files: %d/%d | Size: %.2f MB / %.2f MB | Time: %s\n",
-        ho.processedFiles, ho.totalFiles,
-        float64(ho.processedSize)/1024/1024,
-        float64(ho.totalSize)/1024/1024,
-        time.Since(ho.startTime).Round(time.Second),
-    )
-    fmt.Printf("Current file: %s\n", ho.currentFile)
-    fmt.Println("Recent files:")
-    
-    recentFilesCount := len(ho.recentFiles)
-    if recentFilesCount > 4 {
-        recentFilesCount = 4
-    }
-    for i := 0; i < recentFilesCount; i++ {
-        fmt.Printf("  %s\n", ho.recentFiles[i])
-    }
+	// Print new status
+	fmt.Print(ho.bar.String() + "\n")
+	fmt.Printf("Files: %d/%d | Size: %.2f MB / %.2f MB | Time: %s\n",
+		ho.processedFiles, ho.totalFiles,
+		float64(ho.processedSize)/1024/1024,
+		float64(ho.totalSize)/1024/1024,
+		time.Since(ho.startTime).Round(time.Second),
+	)
+	fmt.Printf("Current file: %s\n", ho.currentFile)
+	fmt.Println("Recent files:")
 
-    // Update lastLines
-    ho.lastLines = 4 + recentFilesCount // 3 for progress, current file, and "Recent files:" + number of recent files
+	recentFilesCount := len(ho.recentFiles)
+	if recentFilesCount > 4 {
+		recentFilesCount = 4
+	}
+	for i := 0; i < recentFilesCount; i++ {
+		fmt.Printf("  %s\n", ho.recentFiles[i])
+	}
+
+	// Update lastLines
+	ho.lastLines = 4 + recentFilesCount // 3 for progress, current file, and "Recent files:" + number of recent files
 }
 
 func (ho *HashingOutput) complete() {
-    ho.mutex.Lock()
-    defer ho.mutex.Unlock()
+	ho.mutex.Lock()
+	defer ho.mutex.Unlock()
 
-    ho.isCompleted = true
-    ho.bar.Finish()
+	ho.isCompleted = true
+	ho.bar.Finish()
 }
 
 func (ho *HashingOutput) printFinalSummary() {
-    ho.mutex.Lock()
-    defer ho.mutex.Unlock()
+	ho.mutex.Lock()
+	defer ho.mutex.Unlock()
 
-    // Clear the last update
-    if ho.lastLines > 0 {
-        fmt.Printf("\033[%dA\033[J", ho.lastLines)
-    }
+	// Clear the last update
+	if ho.lastLines > 0 {
+		fmt.Printf("\033[%dA\033[J", ho.lastLines)
+	}
 
-    fmt.Print(ho.bar.String() + "\n")
-    fmt.Println("Hashing completed!")
-    fmt.Printf("Total files processed: %d\n", ho.processedFiles)
-    fmt.Printf("Total size: %.2f MB\n", float64(ho.processedSize)/1024/1024)
-    fmt.Printf("Time taken: %s\n", time.Since(ho.startTime).Round(time.Second))
+	fmt.Print(ho.bar.String() + "\n")
+	fmt.Println("Hashing completed!")
+	fmt.Printf("Total files processed: %d\n", ho.processedFiles)
+	fmt.Printf("Total size: %.2f MB\n", float64(ho.processedSize)/1024/1024)
+	fmt.Printf("Time taken: %s\n", time.Since(ho.startTime).Round(time.Second))
 
-    if len(ho.ignoredItems) > 0 {
-        fmt.Println("\nIgnored items:")
-        for _, item := range ho.ignoredItems {
-            fmt.Printf("   %s\n      Reason: %s\n", item.Path, item.Reason)
-        }
-    }
+	if len(ho.ignoredItems) > 0 {
+		fmt.Println("\nIgnored items:")
+		for _, item := range ho.ignoredItems {
+			fmt.Printf("   %s\n      Reason: %s\n", item.Path, item.Reason)
+		}
+	}
 }
 
 func (ho *HashingOutput) updateDisplay() {
-    for {
-        time.Sleep(100 * time.Millisecond)
-        ho.mutex.Lock()
-        if ho.isCompleted {
-            ho.mutex.Unlock()
-            return
-        }
-        ho.printStatus()
-        ho.mutex.Unlock()
-    }
+	for {
+		time.Sleep(100 * time.Millisecond)
+		ho.mutex.Lock()
+		if ho.isCompleted {
+			ho.mutex.Unlock()
+			return
+		}
+		ho.printStatus()
+		ho.mutex.Unlock()
+	}
 }
 
 // ====
-
-
-
-
 
 func (ho *HashingOutput) addIgnoredItem(path, reason string) {
 	ho.mutex.Lock()
@@ -175,25 +171,24 @@ func (ho *HashingOutput) addIgnoredItem(path, reason string) {
 	ho.ignoredItems = append(ho.ignoredItems, IgnoredItem{Path: path, Reason: reason})
 }
 
-
 func handleHash(args []string, config Config, jwt *JWT) error {
-    if len(args) < 1 {
-        return fmt.Errorf("usage: hiveforgectl hash <directory>")
-    }
+	if len(args) < 1 {
+		return fmt.Errorf("usage: hiveforgectl hash <directory>")
+	}
 
-    directory := args[0]
+	directory := args[0]
 
-    result, err := hashDirectory(directory)
-    if err != nil {
-        return fmt.Errorf("error hashing directory: %w", err)
-    }
+	result, err := hashDirectory(directory)
+	if err != nil {
+		return fmt.Errorf("error hashing directory: %w", err)
+	}
 
-    if err := sendHashResultToAPI(config, jwt, result); err != nil {
-        return fmt.Errorf("error sending hash result to API: %w", err)
-    }
+	if err := sendHashResultToAPI(config, jwt, result); err != nil {
+		return fmt.Errorf("error sending hash result to API: %w", err)
+	}
 
-    fmt.Println("Hash result successfully sent, handleHash complete.")
-    return nil
+	fmt.Println("Hash result successfully sent, handleHash complete.")
+	return nil
 }
 
 func hashDirectory(rootPath string) (*DirectoryHashResult, error) {
@@ -225,95 +220,97 @@ func hashDirectory(rootPath string) (*DirectoryHashResult, error) {
 	output.complete()
 	output.printFinalSummary()
 
-    result := &DirectoryHashResult{
-        RootPath:           rootPath,
-        DirectoryStructure: rootEntry,
-        TotalSize:          rootEntry.Size,
-        TotalFiles:         output.processedFiles,
-        HashingTime:        time.Since(output.startTime).Seconds(),
-        IgnoredItems:       output.ignoredItems,
-    }
+	result := &DirectoryHashResult{
+		RootPath:           rootPath,
+		DirectoryStructure: rootEntry,
+		TotalSize:          rootEntry.Size,
+		TotalFiles:         output.processedFiles,
+		HashingTime:        time.Since(output.startTime).Seconds(),
+		IgnoredItems:       output.ignoredItems,
+	}
 
-    // Write the result to a JSON file for debugging
-    if err := writeResultToJSONFile(result, "hash_result_debug.json"); err != nil {
-        fmt.Printf("Warning: Failed to write debug JSON file: %v\n", err)
-    } else {
-        fmt.Println("Debug: JSON result written to hash_result_debug.json")
-    }
+	// Write result to JSON file
+	jsonFileName := "hash_result.json"
+	if err := writeResultToJSONFile(result, jsonFileName); err != nil {
+		return nil, fmt.Errorf("error writing hash result to JSON file: %w", err)
+	}
 
-    return result, nil
+	return result, nil
 }
 
 func writeResultToJSONFile(result *DirectoryHashResult, filename string) error {
-    // Create a pretty-printed JSON
-    jsonData, err := json.MarshalIndent(result, "", "  ")
-    if err != nil {
-        return fmt.Errorf("failed to marshal result to JSON: %w", err)
-    }
+	// Create a pretty-printed JSON
+	jsonData, err := json.MarshalIndent(result, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal result to JSON: %w", err)
+	}
 
-    // Write to file
-    err = os.WriteFile(filename, jsonData, 0644)
-    if err != nil {
-        return fmt.Errorf("failed to write JSON to file: %w", err)
-    }
+	// Write to file
+	err = os.WriteFile(filename, jsonData, 0644)
+	if err != nil {
+		return fmt.Errorf("failed to write JSON to file: %w", err)
+	}
 
-    return nil
+	return nil
 }
 
 func processDirectory(rootPath string, dirPath string, rules *IgnoreRules, output *HashingOutput) (*DirectoryEntry, error) {
-    entries, err := os.ReadDir(dirPath)
-    if err != nil {
-        return nil, err
-    }
+	entries, err := os.ReadDir(dirPath)
+	if err != nil {
+		return nil, err
+	}
 
-    dirEntry := &DirectoryEntry{
-        Name: filepath.Base(dirPath),
-        Type: "directory",
-    }
+	dirEntry := &DirectoryEntry{
+		Name:     filepath.Base(dirPath),
+		Type:     "directory",
+		Children: make([]*DirectoryEntry, 0),
+		Size:     0,
+	}
 
-    for _, entry := range entries {
-        childPath := filepath.Join(dirPath, entry.Name())
-        
-        // Get file info, following symlinks
-        info, err := os.Stat(childPath)
-        if err != nil {
-            output.addIgnoredItem(childPath, fmt.Sprintf("Error getting file info: %v", err))
-            continue
-        }
+	for _, entry := range entries {
+		childPath := filepath.Join(dirPath, entry.Name())
 
-        ignored, reason := shouldIgnore(childPath, info.IsDir(), rootPath, rules)
-        if ignored {
-            output.addIgnoredItem(childPath, reason)
-            continue
-        }
+		// Get file info, following symlinks
+		info, err := os.Stat(childPath)
+		if err != nil {
+			output.addIgnoredItem(childPath, fmt.Sprintf("Error getting file info: %v", err))
+			continue
+		}
 
-        if info.IsDir() {
-            childRules := loadIgnoreRules(childPath, rules)
-            childEntry, err := processDirectory(rootPath, childPath, childRules, output)
-            if err != nil {
-                output.addIgnoredItem(childPath, fmt.Sprintf("Error processing directory: %v", err))
-                continue
-            }
-            dirEntry.Children = append(dirEntry.Children, childEntry)
-            dirEntry.Size += childEntry.Size
-        } else if info.Mode().IsRegular() {
-            childEntry, err := processFile(childPath, info, output)
-            if err != nil {
-                output.addIgnoredItem(childPath, fmt.Sprintf("Error processing file: %v", err))
-                continue
-            }
-            dirEntry.Children = append(dirEntry.Children, childEntry)
-            dirEntry.Size += childEntry.Size
-        } else {
-            // Handle special files (e.g., symlinks, devices)
-            output.addIgnoredItem(childPath, "Skipped special file")
-        }
+		ignored, reason := shouldIgnore(childPath, info.IsDir(), rootPath, rules)
+		if ignored {
+			output.addIgnoredItem(childPath, reason)
+			continue
+		}
 
-        output.updateProgress(info.Size())
-    }
+		if info.IsDir() {
+			childRules := loadIgnoreRules(childPath, rules)
+			childEntry, err := processDirectory(rootPath, childPath, childRules, output)
+			if err != nil {
+				output.addIgnoredItem(childPath, fmt.Sprintf("Error processing directory: %v", err))
+				continue
+			}
+			dirEntry.Children = append(dirEntry.Children, childEntry)
+			dirEntry.Size += childEntry.Size
+		} else if info.Mode().IsRegular() {
+			childEntry, err := processFile(childPath, info, output)
+			if err != nil {
+				output.addIgnoredItem(childPath, fmt.Sprintf("Error processing file: %v", err))
+				continue
+			}
+			dirEntry.Children = append(dirEntry.Children, childEntry)
+			dirEntry.Size += childEntry.Size
+		} else {
+			// Handle special files (e.g., symlinks, devices)
+			output.addIgnoredItem(childPath, "Skipped special file")
+		}
 
-    return dirEntry, nil
+		output.updateProgress(info.Size())
+	}
+
+	return dirEntry, nil
 }
+
 func processFile(path string, info os.FileInfo, output *HashingOutput) (*DirectoryEntry, error) {
 	output.updateCurrentFile(path)
 

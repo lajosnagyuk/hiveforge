@@ -20,6 +20,15 @@ config :hiveforge_controller, HiveforgeController.Repo,
     verify: :verify_none
   ]
 
+config :hiveforge_controller, HiveforgeController.S3,
+  backend: System.get_env("S3_BACKEND"),
+  access_key_id: System.get_env("S3_ACCESS_KEY_ID"),
+  secret_access_key: System.get_env("S3_SECRET_ACCESS_KEY"),
+  bucket_name: System.get_env("S3_BUCKET_NAME"),
+  region: System.get_env("S3_REGION"),
+  endpoint: System.get_env("S3_ENDPOINT")
+
+
 config :hiveforge_controller, :enable_gzip_decompression, true
 
 config :hiveforge_controller,

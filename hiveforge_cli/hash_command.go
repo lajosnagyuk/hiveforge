@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -15,21 +16,9 @@ import (
 	"github.com/zeebo/blake3"
 )
 
-const (
-	minChunkSize = 64 * 1024   // 64 KB
-	maxChunkSize = 1024 * 1024 // 1 MB
-	maxChunks    = 1024
-	outputLines  = 8
-)
-
 type IgnoreRules struct {
 	patterns []string
 	source   string // to keep track of where the rule came from
-}
-
-type IgnoredItem struct {
-	Path   string
-	Reason string
 }
 
 type HashingOutput struct {
@@ -57,7 +46,7 @@ func newHashingOutput(totalSize int64, totalFiles int) *HashingOutput {
 			progressbar.OptionShowBytes(true),
 			progressbar.OptionThrottle(65*time.Millisecond),
 			progressbar.OptionShowCount(),
-			progressbar.OptionOnCompletion(func() {}), // Empty function to prevent automatic "completed" message
+			progressbar.OptionOnCompletion(func() {}),
 		),
 		recentFiles:  make([]string, 0, 5),
 		ignoredItems: make([]IgnoredItem, 0),
@@ -91,28 +80,41 @@ func (ho *HashingOutput) printStatus() {
 	ho.mutex.Lock()
 	defer ho.mutex.Unlock()
 
+	// Capture the current status
+	currentFile := ho.currentFile
+	recentFiles := make([]string, len(ho.recentFiles))
+	copy(recentFiles, ho.recentFiles)
+	processedFiles := ho.processedFiles
+	totalFiles := ho.totalFiles
+	processedSize := ho.processedSize
+	totalSize := ho.totalSize
+	startTime := ho.startTime
+	barString := ho.bar.String()
+
 	// Clear previous lines
 	if ho.lastLines > 0 {
 		fmt.Printf("\033[%dA\033[J", ho.lastLines)
 	}
 
-	// Print new status
-	fmt.Print(ho.bar.String() + "\n")
+	// Print new status without holding the lock
+	ho.mutex.Unlock()
+	fmt.Print(barString + "\n")
 	fmt.Printf("Files: %d/%d | Size: %.2f MB / %.2f MB | Time: %s\n",
-		ho.processedFiles, ho.totalFiles,
-		float64(ho.processedSize)/1024/1024,
-		float64(ho.totalSize)/1024/1024,
-		time.Since(ho.startTime).Round(time.Second),
+		processedFiles, totalFiles,
+		float64(processedSize)/1024/1024,
+		float64(totalSize)/1024/1024,
+		time.Since(startTime).Round(time.Second),
 	)
-	fmt.Printf("Current file: %s\n", ho.currentFile)
+	fmt.Printf("Current file: %s\n", currentFile)
 	fmt.Println("Recent files:")
+	ho.mutex.Lock()
 
-	recentFilesCount := len(ho.recentFiles)
+	recentFilesCount := len(recentFiles)
 	if recentFilesCount > 4 {
 		recentFilesCount = 4
 	}
 	for i := 0; i < recentFilesCount; i++ {
-		fmt.Printf("  %s\n", ho.recentFiles[i])
+		fmt.Printf("  %s\n", recentFiles[i])
 	}
 
 	// Update lastLines
@@ -131,20 +133,31 @@ func (ho *HashingOutput) printFinalSummary() {
 	ho.mutex.Lock()
 	defer ho.mutex.Unlock()
 
+	// Capture the final summary details
+	processedFiles := ho.processedFiles
+	processedSize := ho.processedSize
+	startTime := ho.startTime
+	barString := ho.bar.String()
+	ignoredItems := make([]IgnoredItem, len(ho.ignoredItems))
+	copy(ignoredItems, ho.ignoredItems)
+
 	// Clear the last update
 	if ho.lastLines > 0 {
 		fmt.Printf("\033[%dA\033[J", ho.lastLines)
 	}
 
-	fmt.Print(ho.bar.String() + "\n")
+	// Print the final summary without holding the lock
+	ho.mutex.Unlock()
+	fmt.Print(barString + "\n")
 	fmt.Println("Hashing completed!")
-	fmt.Printf("Total files processed: %d\n", ho.processedFiles)
-	fmt.Printf("Total size: %.2f MB\n", float64(ho.processedSize)/1024/1024)
-	fmt.Printf("Time taken: %s\n", time.Since(ho.startTime).Round(time.Second))
+	fmt.Printf("Total files processed: %d\n", processedFiles)
+	fmt.Printf("Total size: %.2f MB\n", float64(processedSize)/1024/1024)
+	fmt.Printf("Time taken: %s\n", time.Since(startTime).Round(time.Second))
+	ho.mutex.Lock()
 
-	if len(ho.ignoredItems) > 0 {
+	if len(ignoredItems) > 0 {
 		fmt.Println("\nIgnored items:")
-		for _, item := range ho.ignoredItems {
+		for _, item := range ignoredItems {
 			fmt.Printf("   %s\n      Reason: %s\n", item.Path, item.Reason)
 		}
 	}
@@ -158,12 +171,10 @@ func (ho *HashingOutput) updateDisplay() {
 			ho.mutex.Unlock()
 			return
 		}
-		ho.printStatus()
 		ho.mutex.Unlock()
+		ho.printStatus()
 	}
 }
-
-// ====
 
 func (ho *HashingOutput) addIgnoredItem(path, reason string) {
 	ho.mutex.Lock()
@@ -178,23 +189,41 @@ func handleHash(args []string, config Config, jwt *JWT) error {
 
 	directory := args[0]
 
-	result, err := hashDirectory(directory)
-	if err != nil {
+	// Create a context with a timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel()
+
+	resultChan := make(chan *DirectoryHashResult)
+	errChan := make(chan error)
+
+	go func() {
+		result, err := hashDirectory(ctx, directory)
+		if err != nil {
+			errChan <- err
+		} else {
+			resultChan <- result
+		}
+	}()
+
+	select {
+	case result := <-resultChan:
+		if err := sendHashResultToAPI(config, jwt, result); err != nil {
+			return fmt.Errorf("error sending hash result to API: %w", err)
+		}
+		fmt.Println("Hash result successfully sent, handleHash complete.")
+		return nil
+	case err := <-errChan:
 		return fmt.Errorf("error hashing directory: %w", err)
+	case <-ctx.Done():
+		return fmt.Errorf("hashing operation timed out after 30 minutes")
 	}
-
-	if err := sendHashResultToAPI(config, jwt, result); err != nil {
-		return fmt.Errorf("error sending hash result to API: %w", err)
-	}
-
-	fmt.Println("Hash result successfully sent, handleHash complete.")
-	return nil
 }
 
-func hashDirectory(rootPath string) (*DirectoryHashResult, error) {
+func hashDirectory(ctx context.Context, rootPath string) (*DirectoryHashResult, error) {
 	var totalSize int64
 	var totalFiles int
 
+	fmt.Println("Scanning directory...")
 	err := filepath.Walk(rootPath, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
@@ -209,10 +238,13 @@ func hashDirectory(rootPath string) (*DirectoryHashResult, error) {
 		return nil, err
 	}
 
+	fmt.Printf("Found %d files, total size: %.2f MB\n", totalFiles, float64(totalSize)/1024/1024)
+
 	output := newHashingOutput(totalSize, totalFiles)
+	go output.updateDisplay()
 
 	ignoreRules := loadIgnoreRules(rootPath, &IgnoreRules{})
-	rootEntry, err := processDirectory(rootPath, rootPath, ignoreRules, output)
+	rootEntry, err := processDirectory(ctx, rootPath, rootPath, ignoreRules, output)
 	if err != nil {
 		return nil, err
 	}
@@ -229,7 +261,6 @@ func hashDirectory(rootPath string) (*DirectoryHashResult, error) {
 		IgnoredItems:       output.ignoredItems,
 	}
 
-	// Write result to JSON file
 	jsonFileName := "hash_result.json"
 	if err := writeResultToJSONFile(result, jsonFileName); err != nil {
 		return nil, fmt.Errorf("error writing hash result to JSON file: %w", err)
@@ -238,23 +269,13 @@ func hashDirectory(rootPath string) (*DirectoryHashResult, error) {
 	return result, nil
 }
 
-func writeResultToJSONFile(result *DirectoryHashResult, filename string) error {
-	// Create a pretty-printed JSON
-	jsonData, err := json.MarshalIndent(result, "", "  ")
-	if err != nil {
-		return fmt.Errorf("failed to marshal result to JSON: %w", err)
+func processDirectory(ctx context.Context, rootPath string, dirPath string, rules *IgnoreRules, output *HashingOutput) (*DirectoryEntry, error) {
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
 	}
 
-	// Write to file
-	err = os.WriteFile(filename, jsonData, 0644)
-	if err != nil {
-		return fmt.Errorf("failed to write JSON to file: %w", err)
-	}
-
-	return nil
-}
-
-func processDirectory(rootPath string, dirPath string, rules *IgnoreRules, output *HashingOutput) (*DirectoryEntry, error) {
 	entries, err := os.ReadDir(dirPath)
 	if err != nil {
 		return nil, err
@@ -270,8 +291,7 @@ func processDirectory(rootPath string, dirPath string, rules *IgnoreRules, outpu
 	for _, entry := range entries {
 		childPath := filepath.Join(dirPath, entry.Name())
 
-		// Get file info, following symlinks
-		info, err := os.Stat(childPath)
+		info, err := entry.Info()
 		if err != nil {
 			output.addIgnoredItem(childPath, fmt.Sprintf("Error getting file info: %v", err))
 			continue
@@ -285,7 +305,7 @@ func processDirectory(rootPath string, dirPath string, rules *IgnoreRules, outpu
 
 		if info.IsDir() {
 			childRules := loadIgnoreRules(childPath, rules)
-			childEntry, err := processDirectory(rootPath, childPath, childRules, output)
+			childEntry, err := processDirectory(ctx, rootPath, childPath, childRules, output)
 			if err != nil {
 				output.addIgnoredItem(childPath, fmt.Sprintf("Error processing directory: %v", err))
 				continue
@@ -293,7 +313,7 @@ func processDirectory(rootPath string, dirPath string, rules *IgnoreRules, outpu
 			dirEntry.Children = append(dirEntry.Children, childEntry)
 			dirEntry.Size += childEntry.Size
 		} else if info.Mode().IsRegular() {
-			childEntry, err := processFile(childPath, info, output)
+			childEntry, err := processFile(ctx, childPath, info, output)
 			if err != nil {
 				output.addIgnoredItem(childPath, fmt.Sprintf("Error processing file: %v", err))
 				continue
@@ -301,7 +321,6 @@ func processDirectory(rootPath string, dirPath string, rules *IgnoreRules, outpu
 			dirEntry.Children = append(dirEntry.Children, childEntry)
 			dirEntry.Size += childEntry.Size
 		} else {
-			// Handle special files (e.g., symlinks, devices)
 			output.addIgnoredItem(childPath, "Skipped special file")
 		}
 
@@ -311,19 +330,93 @@ func processDirectory(rootPath string, dirPath string, rules *IgnoreRules, outpu
 	return dirEntry, nil
 }
 
-func processFile(path string, info os.FileInfo, output *HashingOutput) (*DirectoryEntry, error) {
-	output.updateCurrentFile(path)
+func processFile(ctx context.Context, path string, info os.FileInfo, output *HashingOutput) (*DirectoryEntry, error) {
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
 
-	hashes, err := hashFile(path)
+	output.updateCurrentFile(path)
+	// fmt.Printf("Processing file: %s\n", path) // Additional logging
+
+	file, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
+	defer file.Close()
+
+	chunks, err := FastCDC(file, info.Size())
+	if err != nil {
+		return nil, fmt.Errorf("FastCDC error for file %s: %w", path, err)
+	}
+
+	// Reset file pointer to the beginning
+	_, err = file.Seek(0, 0)
+	if err != nil {
+		return nil, fmt.Errorf("error resetting file pointer for %s: %w", path, err)
+	}
+
+	// Calculate the file hash with a timeout
+	hashCtx, hashCancel := context.WithTimeout(ctx, 10*time.Minute)
+	defer hashCancel()
+
+	fileHasher := blake3.New()
+	doneChan := make(chan error, 1)
+
+	go func() {
+		_, err := io.Copy(fileHasher, file)
+		doneChan <- err
+	}()
+
+	select {
+	case <-hashCtx.Done():
+		return nil, fmt.Errorf("hashing file %s timed out", path)
+	case err := <-doneChan:
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	fileHash := fmt.Sprintf("%x", fileHasher.Sum(nil))
+
+	chunkInfos := make([]ChunkInfo, len(chunks))
+	for i, chunk := range chunks {
+		chunkInfos[i] = ChunkInfo{
+			Hash:   chunk.Hash,
+			Size:   chunk.Size,
+			Offset: chunk.Offset,
+		}
+	}
+
+	var averageChunkSize int
+	if len(chunks) > 0 {
+		averageChunkSize = int(info.Size()) / len(chunks)
+	} else {
+		averageChunkSize = 0
+	}
+
+	fileResult := FileResult{
+		FileInfo: FileInfo{
+			Name: info.Name(),
+			Size: info.Size(),
+			Hash: fileHash,
+		},
+		ChunkingInfo: ChunkingInfo{
+			Algorithm:        "FastCDC",
+			AverageChunkSize: averageChunkSize,
+			MinChunkSize:     minChunkSize,
+			MaxChunkSize:     maxChunkSize,
+			TotalChunks:      len(chunks),
+		},
+		Chunks: chunkInfos,
+	}
 
 	return &DirectoryEntry{
-		Name:   info.Name(),
-		Type:   "file",
-		Size:   info.Size(),
-		Hashes: &hashes,
+		Name:       info.Name(),
+		Type:       "file",
+		Size:       info.Size(),
+		FileResult: &fileResult,
 	}, nil
 }
 
@@ -412,57 +505,16 @@ func matchIgnorePattern(path string, pattern string, isDir bool) (bool, error) {
 	return false, err
 }
 
-func hashFile(filePath string) (FileHashes, error) {
-	file, err := os.Open(filePath)
+func writeResultToJSONFile(result *DirectoryHashResult, filename string) error {
+	jsonData, err := json.MarshalIndent(result, "", "  ")
 	if err != nil {
-		return FileHashes{}, err
+		return fmt.Errorf("failed to marshal result to JSON: %w", err)
 	}
-	defer file.Close()
 
-	fileInfo, err := file.Stat()
+	err = os.WriteFile(filename, jsonData, 0644)
 	if err != nil {
-		return FileHashes{}, err
+		return fmt.Errorf("failed to write JSON to file: %w", err)
 	}
 
-	totalSize := fileInfo.Size()
-	chunkSize := calculateChunkSize(totalSize)
-
-	hashes := make([]string, 0, maxChunks)
-	buffer := make([]byte, chunkSize)
-
-	for {
-		n, err := file.Read(buffer)
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return FileHashes{}, err
-		}
-
-		hash := blake3.Sum256(buffer[:n])
-		hashes = append(hashes, fmt.Sprintf("%x", hash))
-
-		if len(hashes) >= maxChunks {
-			break
-		}
-	}
-
-	return FileHashes{
-		FileName:   filepath.Base(filePath),
-		ChunkSize:  chunkSize,
-		ChunkCount: len(hashes),
-		Hashes:     hashes,
-		TotalSize:  totalSize,
-	}, nil
-}
-
-func calculateChunkSize(fileSize int64) int {
-	chunkSize := fileSize / int64(maxChunks)
-	if chunkSize < minChunkSize {
-		return minChunkSize
-	}
-	if chunkSize > maxChunkSize {
-		return maxChunkSize
-	}
-	return int(chunkSize)
+	return nil
 }

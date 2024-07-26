@@ -11,8 +11,12 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/signal"
 	"os/user"
 	"path/filepath"
+	"runtime/pprof"
+	"syscall"
+
 	"time"
 
 	"github.com/golang-jwt/jwt/v4"
@@ -728,7 +732,19 @@ func displayAgents(agents []Agent) {
 	printSeparator(maxWidths)
 }
 
+func setupSignalHandler() {
+	c := make(chan os.Signal, 1)
+	signal.Notify(c, syscall.SIGUSR1)
+
+	go func() {
+		for range c {
+			pprof.Lookup("goroutine").WriteTo(os.Stdout, 1)
+		}
+	}()
+}
+
 func main() {
+	setupSignalHandler()
 	debug := flag.Bool("debug", false, "Enable debug mode")
 	flag.Parse()
 

@@ -1,39 +1,35 @@
 defmodule HiveforgeController.Services.HashProcessingService do
+  use Plug.Builder
   alias HiveforgeController.Repo
-  alias HiveforgeController.Schemas.{HashResult, FileEntry, Chunk, FileChunk, DirectoryEntry}
+  alias HiveforgeController.Schemas.{HashResult, DirectoryEntry, FileResult, Chunk, FileChunk}
   alias HiveforgeController.Storage.StorageService
+  alias HiveforgeController.SetConfig
   require Logger
   import Ecto.Query
+  import Plug.Conn
 
-  @batch_size 1000
+  def init(opts), do: opts
+
+  def call(conn, opts) do
+    super(conn, opts)
+  end
+
+  defp fetch_body(conn, _opts) do
+    {:ok, body, conn} = read_body(conn)
+    assign(conn, :raw_body, body)
+  end
 
   def process_hash_result(params) do
     Repo.transaction(fn ->
       with {:ok, hash_result} <- create_hash_result(params),
-           {:ok, entries} <- process_directory(hash_result.id, params),
-           {:ok, stored_directory_entries} <- store_directory_entries(Enum.filter(entries, &Map.has_key?(&1, :name))),
-           {:ok, stored_file_entries} <- store_file_entries(Enum.reject(entries, &Map.has_key?(&1, :name))),
-           :ok <- store_chunks(stored_file_entries),
-           :ok <- store_file_chunks(stored_file_entries) do
-        hash_result  # Return the hash_result directly, not wrapped in {:ok, _}
+           {:ok, _} <- process_directory_structure(hash_result, params["dir"]) do
+        hash_result
       else
         {:error, %Ecto.Changeset{} = changeset} ->
-          Logger.error("Validation error: #{inspect(changeset.errors)}", error_type: :validation_error)
+          Logger.error("Validation error: #{inspect(changeset.errors)}")
           Repo.rollback({:validation_error, changeset})
-        {:error, :directory_entry_insertion_failed} ->
-          Logger.error("Failed to insert directory entries", error_type: :database_error)
-          Repo.rollback(:directory_entry_insertion_failed)
-        {:error, :file_entry_insertion_failed} ->
-          Logger.error("Failed to insert file entries", error_type: :database_error)
-          Repo.rollback(:file_entry_insertion_failed)
-        {:error, :chunk_insertion_failed} ->
-          Logger.error("Failed to insert chunks", error_type: :database_error)
-          Repo.rollback(:chunk_insertion_failed)
-        {:error, :file_chunks_insertion_failed} ->
-          Logger.error("Failed to insert file chunks", error_type: :database_error)
-          Repo.rollback(:file_chunks_insertion_failed)
         {:error, reason} ->
-          Logger.error("Unexpected error: #{inspect(reason)}", error_type: :unexpected_error)
+          Logger.error("Unexpected error: #{inspect(reason)}")
           Repo.rollback(reason)
       end
     end)
@@ -43,206 +39,121 @@ defmodule HiveforgeController.Services.HashProcessingService do
     %HashResult{}
     |> HashResult.changeset(%{
       root_path: params["root"],
-      total_files: params["files"],
       total_size: params["size"],
+      total_files: params["files"],
       hashing_time: params["time"],
-      status: "completed",
+      status: "completed", # Add this line
       s3_key: StorageService.generate_s3_key(params["root"]),
-      s3_backend: System.get_env("S3_BACKEND")
+      s3_backend: SetConfig.get(:s3_backend)
     })
     |> Repo.insert()
   end
 
-  defp process_directory(hash_result_id, params) do
-    Logger.debug("Processing root directory: #{inspect(params["root"])}")
-    process_entries(hash_result_id, params["dir"], params["root"])
-  end
+  defp process_directory_structure(hash_result, dir_entry, parent_path \\ nil, parent_id \\ nil) do
+    current_path = build_path(parent_path, dir_entry["name"])
 
-  defp process_entries(hash_result_id, entries, current_path, acc \\ [])
+    attrs = %{
+      name: dir_entry["name"],
+      type: dir_entry["type"],
+      size: dir_entry["size"],
+      path: current_path,
+      hash_result_id: hash_result.id,
+      parent_id: parent_id
+    }
 
-  defp process_entries(hash_result_id, entries, current_path, acc) when is_list(entries) do
-    Logger.debug("Processing #{length(entries)} entries in #{current_path}")
-    Enum.reduce_while(entries, {:ok, acc}, fn entry, {:ok, acc} ->
-      case process_entry(hash_result_id, entry, current_path) do
-        {:ok, new_entries} -> {:cont, {:ok, new_entries ++ acc}}
-        {:error, reason} -> {:halt, {:error, reason}}
-      end
-    end)
-  end
-
-  defp process_entries(hash_result_id, %{"name" => name, "type" => "directory", "children" => children}, current_path, acc) do
-    Logger.debug("Processing directory: #{name} in #{current_path}")
-    process_entries(hash_result_id, children, Path.join(current_path, name), acc)
-  end
-
-  defp process_entries(_, entry, _, _) do
-    Logger.warn("Unexpected entry structure: #{inspect(entry)}")
-    {:error, :invalid_entry_structure}
-  end
-
-  defp process_entry(hash_result_id, entry, current_path) do
-    Logger.debug("Processing entry: #{inspect(entry)}")
-    case entry do
-      %{"name" => name, "type" => "file", "size" => size, "hashes" => hashes} ->
-        path = Path.join(current_path, name)
-        file_entry = %{
-          hash_result_id: hash_result_id,
-          path: path,
-          file_name: name,
-          size: size,
-          chunk_size: hashes["chunkSize"],
-          chunk_count: hashes["chunkCount"],
-          chunks: hashes["hashes"]
-        }
-        {:ok, [file_entry]}
-
-      %{"name" => name, "type" => "directory", "children" => children} ->
-        path = Path.join(current_path, name)
-        directory_entry = %{
-          hash_result_id: hash_result_id,
-          path: path,
-          name: name
-        }
-        case process_entries(hash_result_id, children, path) do
-          {:ok, new_entries} -> {:ok, [directory_entry | new_entries]}
-          {:error, reason} -> {:error, reason}
-        end
-
-      %{"name" => name, "type" => "directory", "size" => 0} ->
-        path = Path.join(current_path, name)
-        directory_entry = %{
-          hash_result_id: hash_result_id,
-          path: path,
-          name: name
-        }
-        {:ok, [directory_entry]}
-
-      _ ->
-        Logger.warn("Skipping unexpected entry: #{inspect(entry)}")
-        {:ok, []}
+    with {:ok, directory_entry} <- create_directory_entry(attrs),
+         :ok <- maybe_create_file_result(directory_entry, dir_entry["file_result"]),
+         :ok <- process_children(hash_result, directory_entry, current_path, dir_entry["children"]) do
+      {:ok, directory_entry}
     end
   end
 
-  defp store_directory_entries(directory_entries) do
-    timestamp = NaiveDateTime.utc_now() |> NaiveDateTime.truncate(:second)
+  defp build_path(nil, name), do: name
+  defp build_path(parent_path, name), do: Path.join(parent_path, name)
 
-    entries_with_timestamps = Enum.map(directory_entries, fn entry ->
-      Map.merge(entry, %{inserted_at: timestamp, updated_at: timestamp})
+  defp process_children(_hash_result, _parent_entry, _parent_path, nil), do: :ok
+  defp process_children(hash_result, parent_entry, parent_path, children) when is_list(children) do
+    Enum.each(children, fn child ->
+      process_directory_structure(hash_result, child, parent_path, parent_entry.id)
     end)
-
-    Repo.transaction(fn ->
-      Enum.chunk_every(entries_with_timestamps, @batch_size)
-      |> Enum.reduce_while({:ok, []}, fn batch, {:ok, acc} ->
-        case Repo.insert_all(DirectoryEntry, batch, returning: [:id, :path]) do
-          {count, stored_entries} ->
-            Logger.info("Inserted #{count} directory entries")
-            {:cont, {:ok, acc ++ stored_entries}}
-          _ ->
-            {:halt, {:error, :directory_entry_insertion_failed}}
-        end
-      end)
-    end)
-    |> case do
-      {:ok, {:ok, stored_entries}} ->
-        stored_entries_map = Map.new(stored_entries, fn entry -> {entry.path, entry} end)
-        updated_directory_entries = Enum.map(directory_entries, fn entry ->
-          stored_entry = Map.get(stored_entries_map, entry.path)
-          Map.put(entry, :id, stored_entry.id)
-        end)
-        {:ok, updated_directory_entries}
-      {:error, _} = error -> error
-    end
-  end
-
-  defp store_file_entries(file_entries) do
-    entries_without_chunks = Enum.map(file_entries, &Map.drop(&1, [:chunks]))
-    timestamp = NaiveDateTime.utc_now() |> NaiveDateTime.truncate(:second)
-
-    entries_with_timestamps = Enum.map(entries_without_chunks, fn entry ->
-      Map.merge(entry, %{inserted_at: timestamp, updated_at: timestamp})
-    end)
-
-    Repo.transaction(fn ->
-      Enum.chunk_every(entries_with_timestamps, @batch_size)
-      |> Enum.reduce_while({:ok, []}, fn batch, {:ok, acc} ->
-        case Repo.insert_all(FileEntry, batch, returning: [:id, :path]) do
-          {count, stored_entries} ->
-            Logger.info("Inserted #{count} file entries")
-            {:cont, {:ok, acc ++ stored_entries}}
-          _ ->
-            {:halt, {:error, :file_entry_insertion_failed}}
-        end
-      end)
-    end)
-    |> case do
-      {:ok, {:ok, stored_entries}} ->
-        stored_entries_map = Map.new(stored_entries, fn entry -> {entry.path, entry} end)
-        updated_file_entries = Enum.map(file_entries, fn entry ->
-          stored_entry = Map.get(stored_entries_map, entry.path)
-          Map.put(entry, :id, stored_entry.id)
-        end)
-        {:ok, updated_file_entries}
-      {:error, _} = error -> error
-    end
-  end
-
-  defp store_chunks(file_entries) do
-    chunks = file_entries
-    |> Enum.flat_map(& &1.chunks)
-    |> Enum.uniq()
-    |> Enum.map(&%{hash: &1, status: "pending", size: 0})
-
-    timestamp = NaiveDateTime.utc_now() |> NaiveDateTime.truncate(:second)
-    chunks_with_timestamps = Enum.map(chunks, fn chunk ->
-      Map.merge(chunk, %{inserted_at: timestamp, updated_at: timestamp})
-    end)
-
-    Enum.chunk_every(chunks_with_timestamps, @batch_size)
-    |> Enum.each(fn batch ->
-      {count, _} = Repo.insert_all(Chunk, batch, on_conflict: :nothing)
-      Logger.info("Inserted #{count} chunks")
-    end)
-
     :ok
   end
 
-  defp store_file_chunks(file_entries) do
-    timestamp = NaiveDateTime.utc_now() |> NaiveDateTime.truncate(:second)
-
-    # First, fetch all chunk IDs
-    chunk_hashes = file_entries |> Enum.flat_map(&(&1.chunks)) |> Enum.uniq()
-    chunk_id_map = fetch_chunk_ids(chunk_hashes)
-
-    file_chunks = for file_entry <- file_entries,
-                      {chunk_hash, index} <- Enum.with_index(file_entry.chunks),
-                      chunk_id = Map.get(chunk_id_map, chunk_hash) do
-      %{
-        file_entry_id: file_entry.id,
-        chunk_id: chunk_id,
-        sequence: index,
-        inserted_at: timestamp,
-        updated_at: timestamp
-      }
-    end
-
-    Enum.chunk_every(file_chunks, @batch_size)
-    |> Enum.reduce_while(:ok, fn batch, _ ->
-      case Repo.insert_all(FileChunk, batch) do
-        {count, _} when count > 0 ->
-          Logger.info("Inserted #{count} file chunks")
-          {:cont, :ok}
-        {0, _} ->
-          Logger.error("Failed to insert file chunks batch")
-          {:halt, {:error, :file_chunks_insertion_failed}}
-      end
-    end)
+  defp create_directory_entry(attrs) do
+    %DirectoryEntry{}
+    |> DirectoryEntry.changeset(attrs)
+    |> Repo.insert()
   end
 
-  defp fetch_chunk_ids(chunk_hashes) do
-    Chunk
-    |> where([c], c.hash in ^chunk_hashes)
-    |> select([c], {c.hash, c.id})
-    |> Repo.all()
-    |> Map.new()
+  defp maybe_create_file_result(directory_entry, nil), do: :ok
+  defp maybe_create_file_result(directory_entry, file_result) do
+    attrs = %{
+      name: file_result["file_info"]["name"],
+      size: file_result["file_info"]["size"],
+      hash: file_result["file_info"]["hash"],
+      algorithm: file_result["chunking_info"]["algorithm"],
+      average_chunk_size: file_result["chunking_info"]["average_chunk_size"],
+      min_chunk_size: file_result["chunking_info"]["min_chunk_size"],
+      max_chunk_size: file_result["chunking_info"]["max_chunk_size"],
+      total_chunks: file_result["chunking_info"]["total_chunks"],
+      directory_entry_id: directory_entry.id
+    }
+
+    with {:ok, file_result_record} <- create_file_result(attrs),
+         :ok <- create_chunks_and_associations(file_result_record, file_result["chunks"]) do
+      :ok
+    end
+  end
+
+  defp create_file_result(attrs) do
+    %FileResult{}
+    |> FileResult.changeset(attrs)
+    |> Repo.insert()
+  end
+
+  defp create_chunks_and_associations(file_result_record, chunks) do
+    Enum.with_index(chunks, fn chunk, index ->
+      with {:ok, chunk_record} <- create_or_get_chunk(chunk),
+           {:ok, _} <- create_file_chunk_association(file_result_record, chunk_record, index, chunk["offset"]) do
+        :ok
+      else
+        {:error, reason} -> {:error, reason}
+      end
+    end)
+    |> Enum.all?(&(&1 == :ok))
+    |> case do
+      true -> :ok
+      false -> {:error, :chunk_creation_failed}
+    end
+  end
+
+  defp create_or_get_chunk(chunk) do
+    case Repo.get_by(Chunk, hash: chunk["hash"]) do
+      nil ->
+        %Chunk{}
+        |> Chunk.changeset(%{hash: chunk["hash"], size: chunk["size"]})
+        |> Repo.insert()
+      existing_chunk ->
+        {:ok, existing_chunk}
+    end
+  end
+
+  defp create_file_chunk_association(file_result, chunk, sequence, offset) do
+    %FileChunk{}
+    |> FileChunk.changeset(%{
+      file_result_id: file_result.id,
+      chunk_id: chunk.id,
+      sequence: sequence,
+      offset: offset
+    })
+    |> Repo.insert()
+  end
+
+  defp process_children(_hash_result, _parent_entry, nil), do: :ok
+  defp process_children(hash_result, parent_entry, children) when is_list(children) do
+    Enum.each(children, fn child ->
+      process_directory_structure(hash_result, child, parent_entry.id)
+    end)
+    :ok
   end
 end

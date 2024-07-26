@@ -3,17 +3,23 @@ defmodule HiveforgeController.Schemas.DirectoryEntry do
   import Ecto.Changeset
 
   schema "directory_entries" do
-    field :path, :string
     field :name, :string
+    field :type, :string
+    field :size, :integer
+    field :path, :string
 
     belongs_to :hash_result, HiveforgeController.Schemas.HashResult
+    belongs_to :parent, HiveforgeController.Schemas.DirectoryEntry
+    has_many :children, HiveforgeController.Schemas.DirectoryEntry, foreign_key: :parent_id
+    has_one :file_result, HiveforgeController.Schemas.FileResult
 
     timestamps()
   end
 
   def changeset(directory_entry, attrs) do
     directory_entry
-    |> cast(attrs, [:path, :name, :hash_result_id])
-    |> validate_required([:path, :name, :hash_result_id])
+    |> cast(attrs, [:name, :type, :size, :path, :hash_result_id, :parent_id])
+    |> validate_required([:name, :type, :size, :path, :hash_result_id])
+    |> validate_inclusion(:type, ["file", "directory"])
   end
 end

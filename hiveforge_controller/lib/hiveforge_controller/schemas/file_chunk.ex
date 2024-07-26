@@ -4,8 +4,9 @@ defmodule HiveforgeController.Schemas.FileChunk do
 
   schema "file_chunks" do
     field :sequence, :integer
+    field :offset, :integer
 
-    belongs_to :file_entry, HiveforgeController.Schemas.FileEntry
+    belongs_to :file_result, HiveforgeController.Schemas.FileResult
     belongs_to :chunk, HiveforgeController.Schemas.Chunk
 
     timestamps()
@@ -13,8 +14,7 @@ defmodule HiveforgeController.Schemas.FileChunk do
 
   def changeset(file_chunk, attrs) do
     file_chunk
-    |> cast(attrs, [:sequence, :file_entry_id, :chunk_id])
-    |> validate_required([:sequence, :file_entry_id, :chunk_id])
-    |> unique_constraint([:file_entry_id, :sequence])
+    |> cast(attrs, [:sequence, :offset, :file_result_id, :chunk_id])
+    |> validate_required([:sequence, :offset, :file_result_id, :chunk_id])
   end
 end

@@ -15,8 +15,7 @@ defmodule HiveforgeController.Controllers.HashController do
     with {:ok, raw_body} <- get_raw_body(conn),
          {:ok, parsed_body} <- parse_json(raw_body),
          :ok <- store_raw_json(parsed_body),
-         {:ok, %HiveforgeController.Schemas.HashResult{id: hash_result_id} = hash_result} <- HashProcessingService.process_hash_result(parsed_body) do
-
+         {:ok, %HiveforgeController.Schemas.HashResult{id: hash_result_id}} <- HashProcessingService.process_hash_result(parsed_body) do
       Logger.info("Successfully processed hash result: #{hash_result_id}")
       send_json_response(conn, :created, %{hash_result_id: hash_result_id})
     else
@@ -34,7 +33,6 @@ defmodule HiveforgeController.Controllers.HashController do
         send_json_response(conn, :internal_server_error, %{error: "An unexpected error occurred"})
     end
   end
-
 
   defp translate_error({msg, opts}) do
     Enum.reduce(opts, msg, fn {key, value}, acc ->

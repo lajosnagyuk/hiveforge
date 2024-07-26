@@ -10,11 +10,11 @@ import (
 )
 
 const (
-	minChunkSize       = 4 * 1024                   // 4 KiB (sector-aligned)
+	minChunkSize       = 64 * 1024                  // 64 KiB (source files are likely one chunked, 4k-ish chunks aren't good enough anyway)
 	maxChunkSize       = 128 * 1024                 // 128 KiB (for typical files)
-	normChunkSize      = 16 * 1024                  // 16 KiB (optimized for source code)
+	normChunkSize      = 64 * 1024                  // 16 KiB (optimized for source code)
 	largeFileThreshold = 1 * 1024 * 1024 * 1024     // 1 GB
-	absoluteMaxChunks  = 1000000                    // Hard limit on number of chunks
+	absoluteMaxChunks  = 100000                     // Hard limit on number of chunks
 	maskS              = uint64(0x0000d90003530000) // For chunks smaller than normChunkSize
 	maskL              = uint64(0x0000d90003100000) // For chunks larger than normChunkSize
 	hashSize           = 16                         // 16-byte hash (128 bits)

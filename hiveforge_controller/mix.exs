@@ -41,7 +41,8 @@ defmodule HiveforgeController.MixProject do
       {:joken, "~> 2.6"},
       {:b3, "~> 0.1"},
       {:ex_aws, "~> 2.5"},
-      {:ex_aws_s3, "~> 2.5"}
+      {:ex_aws_s3, "~> 2.5"},
+      {:uniq, "~> 0.6"}
     ]
   end
 end

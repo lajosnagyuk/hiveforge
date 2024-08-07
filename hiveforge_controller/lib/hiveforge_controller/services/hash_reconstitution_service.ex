@@ -14,16 +14,16 @@ defmodule HiveforgeController.Services.HashReconstitutionService do
     end
   end
 
-  defp get_hash_result(id) do
-    case Repo.get(HashResult, id) do
+  defp get_hash_result(uid) do
+    case Repo.get(HashResult, uid) do
       nil -> {:error, :not_found}
       hash_result -> {:ok, hash_result}
     end
   end
 
-  defp get_directory_structure(hash_result_id) do
+  defp get_directory_structure(hash_result_uid) do
     query = from de in DirectoryEntry,
-      where: de.hash_result_id == ^hash_result_id,
+      where: de.hash_result_uid == ^hash_result_uid,
       preload: [file_result: [file_chunks: [chunk: []]]]
 
     case Repo.all(query) do

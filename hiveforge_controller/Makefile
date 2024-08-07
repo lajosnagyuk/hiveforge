@@ -18,9 +18,13 @@ TLS_TERMINATION_METHOD ?= service
 DOCKER_BUILDX ?= docker buildx
 DOCKER_BUILDX_BUILDER ?= multi-arch-builder
 
-.PHONY: all buildx-setup build push clean
+.PHONY: all buildx-setup build push clean reset-buildx
 
 all: build build-migrations push push-migrations
+
+# devkubernetes only builds app without migrations
+devkubernetes: build push
+
 
 buildx-setup:
 	# Check if the builder instance already exists
@@ -31,6 +35,13 @@ buildx-setup:
 	fi
 	# Boot the builder instance
 	$(DOCKER_BUILDX) inspect $(DOCKER_BUILDX_BUILDER) || $(DOCKER_BUILDX) bootstrap
+
+reset-buildx:
+	# Remove existing buildx builder
+	-$(DOCKER_BUILDX) rm -f $(DOCKER_BUILDX_BUILDER) || true
+	# Recreate buildx builder
+	$(MAKE) buildx-setup
+
 
 build:
 	# Build the Docker image using Buildx
